@@ -9,7 +9,6 @@ void initSinglePool(SinglePool* pool)
   pool->size = 0;
 }
 
-// Insertion to the end of the deque.
 void pushBack(SinglePool* pool, Node node)
 {
   if (pool->front + pool->size >= pool->capacity) {
@@ -21,19 +20,17 @@ void pushBack(SinglePool* pool, Node node)
   pool->size += 1;
 }
 
-// Removal from the end of the deque.
 Node popBack(SinglePool* pool, int* hasWork)
 {
   if (pool->size > 0) {
     *hasWork = 1;
-    pool->size--;
+    pool->size -= 1;
     return pool->elements[pool->front + pool->size];
   }
 
   return (Node){0};
 }
 
-// Removal from the front of the deque.
 Node popFront(SinglePool* pool, int* hasWork)
 {
   if (pool->size > 0) {
@@ -45,7 +42,6 @@ Node popFront(SinglePool* pool, int* hasWork)
   return (Node){0};
 }
 
-// Free the memory.
 void deleteSinglePool(SinglePool* pool)
 {
   free(pool->elements);

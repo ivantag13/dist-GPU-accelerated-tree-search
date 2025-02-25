@@ -10,13 +10,15 @@
 # Configuration of Chapel for (multi-)GPU-accelerated experiments on the Iris
 # cluster of the Université du Luxembourg (https://hpc-docs.uni.lu/systems/iris/).
 
-# Load the foss toolchain to get access to gcc, mpi, etc...
+# Load modules
 module load toolchain/foss/2020b
 module load system/CUDA/11.1
 module load devel/CMake
 
+export HERE=$(pwd)
+
 export CHPL_VERSION=$(cat CHPL_VERSION)
-export CHPL_HOME="$PWD/chapel-${CHPL_VERSION}MCG"
+export CHPL_HOME="$HERE/chapel-${CHPL_VERSION}MCG_nvidia"
 
 # Download Chapel if not found
 if [ ! -d "$CHPL_HOME" ]; then
@@ -38,8 +40,6 @@ export CHPL_GPU="nvidia"
 export CHPL_GPU_ARCH="sm_70"
 export CHPL_GPU_MEM_STRATEGY="array_on_device"
 
-export GASNET_PHYSMEM_MAX='64 GB'
-
 cd $CHPL_HOME
 make -j $SLURM_CPUS_PER_TASK
-cd ../..
+cd $HERE/..
