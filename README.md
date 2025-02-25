@@ -1,7 +1,9 @@
-# GPU-accelerated tree-search in Chapel
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10786275.svg)](https://doi.org/10.5281/zenodo.10786275)
 
-This repository contains the implementation of a GPU-accelerated tree-search algorithm in Chapel.
-The latter is instantiated on the backtracking method to solve instances of the N-Queens problem (proof-of-concept) and on the Branch-and-Bound method to solve Taillard's instances of the permutation flowshop scheduling problem (PFSP).
+# GPU-accelerated tree search in Chapel
+
+This repository contains the implementation of a GPU-accelerated tree search algorithm in Chapel.
+The latter is instantiated on the backtracking method to solve instances of the N-Queens problem (proof-of-concept) and on the Branch-and-Bound method to solve Taillard's instances of the Permutation Flowshop Scheduling Problem (PFSP).
 For comparison purpose, CUDA-based counterpart implementations are also provided.
 
 ## Design
@@ -35,7 +37,7 @@ In order to compile and execute the CUDA-based code on AMD GPU architectures, we
 The [chpl_config](./chpl_config/) directory contains several Chapel environment configuration scripts.
 The latter can serve as templates and can be (and should be) adapted to the target system.
 
-**Note:** The code is implemented using Chapel 2.1.0 and might not compile and run with older or newer versions.
+**Note:** The code is implemented using Chapel 2.3.0 and might not compile and run with older or newer versions.
 By default, the target architecture for CUDA code generation is set to `sm_70`, and to `gfx906` for AMD.
 
 ### Compilation & execution
