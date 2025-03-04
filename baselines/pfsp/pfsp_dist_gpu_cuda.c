@@ -21,7 +21,6 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/evaluate.h"
-// #include "lib/Pool.h"
 #include "lib/Pool_ext.h"
 #include "lib/Auxiliary.h"
 
@@ -453,6 +452,48 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   SinglePool_ext pool_lloc;
   initSinglePool_ext(&pool_lloc);
 
+  // Variables for One-Sided Work-Stealing using only MPI_Put
+
+  // TO DO: Window Info
+  // MPI_Info info_nodes, info_requests;
+
+  int *steal_request;
+  MPI_Win win_requests;
+  int err = MPI_Win_allocate(commSize * sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &steal_request, &win_requests);
+
+  if (err != MPI_SUCCESS || steal_request == NULL)
+  {
+    char err_string[MPI_MAX_ERROR_STRING];
+    int err_length;
+    MPI_Error_string(err, err_string, &err_length);
+    fprintf(stderr, "MPI_Win_allocate failed: %s\n", err_string);
+    MPI_Abort(MPI_COMM_WORLD, err);
+  }
+
+  int capacity_per_proc = 50000;
+  int *steal_nodes;
+  MPI_Win win_nodes;
+  err = MPI_Win_allocate(commSize * capacity_per_proc * sizeof(Node), sizeof(Node), MPI_INFO_NULL, MPI_COMM_WORLD, &steal_nodes, &win_nodes);
+
+  if (err != MPI_SUCCESS || steal_nodes == NULL)
+  {
+    char err_string[MPI_MAX_ERROR_STRING];
+    int err_length;
+    MPI_Error_string(err, err_string, &err_length);
+    fprintf(stderr, "MPI_Win_allocate failed: %s\n", err_string);
+    MPI_Abort(MPI_COMM_WORLD, err);
+  }
+
+  for (int i = 0; i < commSize; i++)
+  {
+    // From 0 to 'commSize - 1' indicates which MPIRank contributed with work
+    // '-2' indicates the need of work
+    steal_request[i] = -1; // BUSY
+  }
+
+  MPI_Win_sync(win_requests);
+  MPI_Barrier(MPI_COMM_WORLD);
+
   // each MPI process gets its chunk
   for (int i = 0; i < c; i++)
   {
@@ -573,13 +614,39 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       // One MPI process = no Work-Stealing
       if (commSize == 1)
         break;
-      // local work stealing
       // TO-DO: Distributed Work-Stealing per request
+      bool remoteSteal = true;
       // int tries = 0;
-      bool remoteSteal = false;
+
+      // '-2' indicates steal request
+      steal_request[MPIRank] = -2;
+      for (int j = 0; j < commSize; j++)
+      {
+        if (j == MPIRank)
+          continue; // Skip self
+        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, j, 0, win_requests);
+        MPI_Put(&steal_request[MPIRank], 1, MPI_INT, j, MPIRank, 1, MPI_INT, win_requests);
+        MPI_Win_flush(j, win_requests);
+        MPI_Win_unlock(j, win_requests);
+      }
+
+      while (steal_request[MPIRank] == -2)
+      {
+        int sum = 0;
+        for (int j = 0; j < commSize; j++)
+          sum += steal_request[j];
+        if (sum == commSize * (-2)) // Everybody has no more work
+        {
+          // In this implementation, if remoteSteal == false, then we are probably over
+          remoteSteal = false;
+          break;
+        }
+        else
+          continue;
+      }
 
       // Distributed Termination Condition
-      // This termination condition is not good for distributed level
+      // This termination condition is not 'ideal' for distributed level
       if (remoteSteal == false)
       {
         if (atomic_load(&localeState) == BUSY)
@@ -608,9 +675,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     }
   }
 
+  for (int i = 0; i < commSize; i++)
+  {
+    printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
+  }
+
   MPI_Barrier(MPI_COMM_WORLD);
 
-  // Freeing device and host memory from GPU-accelerated step (step 2) 
+  // Freeing device and host memory from GPU-accelerated step (step 2)
   cudaFree(parents_d);
   cudaFree(bounds_d);
   cudaFree(p_times_d);
@@ -778,6 +850,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
+  MPI_Win_free(&win_nodes);
+  MPI_Win_free(&win_requests);
   MPI_Type_free(&myNode);
 }
 
@@ -794,6 +868,21 @@ int main(int argc, char *argv[])
 
   MPI_Comm_rank(MPI_COMM_WORLD, &MPIRank);
   MPI_Comm_size(MPI_COMM_WORLD, &commSize);
+
+  // ERROR HANDLING
+  if (commSize <= 0)
+  {
+    fprintf(stderr, "Error: commSize (%d) must be greater than zero.\n", commSize);
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+
+  int flag;
+  MPI_Initialized(&flag);
+  if (!flag)
+  {
+    fprintf(stderr, "Error: MPI is not initialized.\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
 
   srand(time(NULL));
 
