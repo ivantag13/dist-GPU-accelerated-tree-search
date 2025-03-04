@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-SYSTEM ?= g5k
+SYSTEM ?= default
 
 # Compilers and common options
 C_COMPILER    := gcc
@@ -39,7 +39,7 @@ endif
 # HIP_OBJECTS      := $(HIP_SOURCES:hip.cu=hip.o)
 
 # Executable names
-EXECUTABLES := pfsp_c.out pfsp_gpu_cuda.out pfsp_multigpu_cuda.out pfsp_dist_multigpu_cuda.out pfsp_gpu_hip.out pfsp_multigpu_hip.out pfsp_dist_multigpu_hip.out
+EXECUTABLES := pfsp_c.out pfsp_gpu_cuda.out pfsp_multigpu_cuda.out pfsp_dist_gpu_cuda.out pfsp_dist_multigpu_cuda.out pfsp_gpu_hip.out pfsp_multigpu_hip.out pfsp_dist_gpu_hip.out pfsp_dist_multigpu_hip.out 
 
 # Build codes
 all: $(EXECUTABLES)
@@ -63,6 +63,10 @@ pfsp_gpu_cuda.out: pfsp_gpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_si
 # Build executable for multi-GPU in C+OpenMP+CUDA
 pfsp_multigpu_cuda.out: pfsp_multigpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/evaluate.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_ext.o $(LIBPATH)/Auxiliary.o
 	$(C_COMPILER) $(C_COMMON_OPTS) -fopenmp $^ -o $@ -lm -lcudart $(CUDA_INCLUDE) $(CUDA_LIB)
+
+# Build executable for distributed single-GPU in C+MPI+CUDA
+pfsp_dist_gpu_cuda.out: pfsp_dist_gpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/evaluate.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_ext.o $(LIBPATH)/Auxiliary.o
+	$(MPI_COMPILER) $(C_COMMON_OPTS) -fopenmp $^ -o $@ -lm -lcudart $(CUDA_INCLUDE) $(CUDA_LIB)
 
 # Build executable for distributed multi-GPU in C+MPI+OpenMP+CUDA
 pfsp_dist_multigpu_cuda.out: pfsp_dist_multigpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/evaluate.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_ext.o $(LIBPATH)/Auxiliary.o
@@ -89,6 +93,14 @@ pfsp_multigpu_hip.o: pfsp_multigpu_cuda.c
 
 pfsp_multigpu_hip.out: pfsp_multigpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_ext.o $(LIBPATH)/Auxiliary.o $(LIBPATH)/evaluate_hip.o
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -fopenmp $^ -o $@
+
+# Build executable for distributed single-GPU in C+MPI+HIP
+pfsp_dist_gpu_hip.o: pfsp_dist_gpu_cuda.c
+	hipify-perl $< > $<.hip
+	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) -fopenmp -c $<.hip -o $@
+
+pfsp_dist_gpu_hip.out: pfsp_dist_gpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_ext.o $(LIBPATH)/Auxiliary.o $(LIBPATH)/evaluate_hip.o
+	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) -lmpi_cxx -lmpi -lopen-pal -fopenmp $^ -o $@
 
 # Build executable for distributed multi-GPU in C+MPI+OpenMP+HIP
 pfsp_dist_multigpu_hip.o: pfsp_dist_multigpu_cuda.c
