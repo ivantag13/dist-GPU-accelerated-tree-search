@@ -470,8 +470,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     MPI_Abort(MPI_COMM_WORLD, err);
   }
 
-  int capacity_per_proc = 50000;
-  int *steal_nodes;
+  int capacity_per_proc = 10000;
+  Node *steal_nodes;
   MPI_Win win_nodes;
   err = MPI_Win_allocate(commSize * capacity_per_proc * sizeof(Node), sizeof(Node), MPI_INFO_NULL, MPI_COMM_WORLD, &steal_nodes, &win_nodes);
 
@@ -578,6 +578,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int *bounds_d;
   cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
+  int nSteal = 0;
+  int nSSteal = 0;
+
   while (1)
   {
     int poolSize = popBackBulk(&pool_lloc, m, M, parents);
@@ -608,6 +611,59 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       */
       generate_children(parents, poolSize, jobs, bounds,
                         &eachLocaleExploredTree, &eachLocaleExploredSol, best, &pool_lloc);
+
+      // Answer WS requests after a complete round of bounding+pruning+branching
+      // local work stealing attempts
+      int tries = 0;
+      int requests[commSize];
+      permute(requests, commSize); // Introduce some randomness
+
+      while (tries < commSize && pool_lloc.size > 4 * (capacity_per_proc))
+      { // WS0 loop
+        int requestID = requests[tries];
+
+        if (steal_request[requestID] == -1 || requestID == MPIRank) // BUSY worker or MYself
+        {
+          nSteal++;
+          tries++;
+          continue;
+        }
+        else if (steal_request[requestID] == -2) // Can send work
+        {
+          int expected = -2;       // Expected old value
+          int new_value = MPIRank; // New value to set
+          int old_value;           // Buffer for the old value
+
+          // Lock the window for atomic access
+          MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_requests);
+          MPI_Compare_and_swap(&new_value, &expected, &old_value, MPI_INT, requestID, requestID, win_requests);
+          MPI_Win_unlock(requestID, win_requests); // Unlock after atomic operation
+          //nSSteal++;
+
+
+          // If successful, notify
+          if (old_value == -2)
+          {
+            int amount_nodes = capacity_per_proc;
+            // (pool_lloc.size > 2 * capacity_per_proc) ? (amount_nodes = capacity_per_proc) : (amount_nodes = pool_lloc.size / 2);
+            MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_nodes);
+            MPI_Put(&pool_lloc.elements[pool_lloc.size - amount_nodes], amount_nodes * sizeof(Node), MPI_BYTE, requestID, MPIRank * capacity_per_proc, amount_nodes * sizeof(Node), MPI_BYTE, win_nodes);
+            // MPI_Get(stolen_elements, victim_size * sizeof(Node), MPI_BYTE, victim_rank, 0, victim_size * sizeof(Node), MPI_BYTE, elements_win[victim_thread]);
+            MPI_Win_flush(requestID, win_nodes);
+            MPI_Win_unlock(requestID, win_nodes); // Unlock after atomic operation
+            pool_lloc.size -= amount_nodes;
+
+            printf("Proc[%d] gave work to RequestProc[%d]\n", MPIRank, requestID);
+            nSSteal++;
+            break;
+          }
+          // MPI_Compare_and_swap(steal_request, &MPIRank, &steal_request[requestID], MPI_INT, requestID, MPIRank, win_requests);
+          // printf("Proc[%d] give work to RequestProc[%d]\n", MPIRank, requestID);
+          // nSSteal++;
+          // break;
+        }
+        tries++;
+      }
     }
     else
     {
@@ -634,7 +690,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       {
         int sum = 0;
         for (int j = 0; j < commSize; j++)
+        {
           sum += steal_request[j];
+          if (steal_request[j] >= 0)
+          {
+            printf("Proc[%d] got work from StolenProc[%d]\n", MPIRank, steal_request[j]);
+            pushBackBulk(&pool_lloc, ( steal_nodes + (MPIRank * capacity_per_proc) ), capacity_per_proc);
+          }
+        }
         if (sum == commSize * (-2)) // Everybody has no more work
         {
           // In this implementation, if remoteSteal == false, then we are probably over
@@ -642,7 +705,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
           break;
         }
         else
-          continue;
+          break;
       }
 
       // Distributed Termination Condition
@@ -679,6 +742,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   {
     printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
   }
+  printf("Proc[%d] nSSteal = %d nSteal = %d\n", MPIRank, nSSteal, nSteal);
+
 
   MPI_Barrier(MPI_COMM_WORLD);
 
