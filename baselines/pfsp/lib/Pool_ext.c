@@ -107,6 +107,7 @@ int popBackBulk(SinglePool_ext* pool, const int m, const int M, Node* parents) {
   return 0;
 }
 
+
 // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
 Node* popBackBulkFree(SinglePool_ext* pool, const int m, const int M, int* poolSize) {
   if (pool->size >= 2*m) {
@@ -119,6 +120,21 @@ Node* popBackBulkFree(SinglePool_ext* pool, const int m, const int M, int* poolS
   }
 
   *poolSize = 0;
+  return NULL;
+}
+
+// Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
+Node* popBackBulkFreeN(SinglePool_ext* pool, const int m, const int M, int* N) {
+  if (pool->size >= 2*m) {
+    //*poolSize = pool->size/2;
+    pool->size -= *N;
+    Node* parents = (Node*)malloc(*N * sizeof(Node));
+    for (int i = 0; i < *N; i++)
+      parents[i] = pool->elements[pool->front + pool->size + i];
+    return parents;
+  }
+
+  *N = 0;
   return NULL;
 }
 
