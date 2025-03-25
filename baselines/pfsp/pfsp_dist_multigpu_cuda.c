@@ -616,46 +616,35 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       int poolSize = popBackBulk(pool_loc, m, M, parents);
       poolSizes_all[gpuID] = poolSize;
 
-// Check for global termination here while reuniting the sizes
-//#pragma omp barrier
+      // Work Sharing by Master Thread
       if (gpuID == 0)
       {
-
+        // Termination Detection of GPU-accelerated step
         termination_flag = 0;
 
         // Check multiPool sizes
         for (int i = 0; i < D; i++)
         {
           if (multiPool[i].size > m || poolSizes_all[i] > 0)
-          {
             termination_flag = 1;
-            break;
-          }
         }
 
-        // printf("Proc[%d] Thread[%d] before allgather termination_flag = %d\n", MPIRank, gpuID, termination_flag);
         MPI_Allgather(&termination_flag, 1, MPI_INT, global_flags, 1, MPI_INT, MPI_COMM_WORLD);
-        // printf("Proc[%d] Thread[%d] after allgather\n", MPIRank, gpuID);
-        // for (int j = 0; j < commSize; j++)
-        //   printf("Proc[%d] Thread[%d] global_flag[%d] = %d\n", MPIRank, gpuID, j, global_flags[j]);
 
         int termination = 0;
         for (int i = 0; i < commSize; i++)
-        {
           termination += global_flags[i];
-        }
 
         if (termination == 0) // not only termination has to be checked, but also the poolSizes of other threads
           global_termination_flag = 1;
 
-        if (global_termination_flag == 0)
+        // If no Termination, we proceed to work sharing
+        if (!global_termination_flag)
         {
           // Step 1: Calculate the size of the shared data (last half of parents)
           int halfSize = poolSize / 2;
           if (poolSize % 2 != 0)
-          {
             halfSize++; // Adjust for odd poolSize
-          }
 
           // Step 2: Allocate a buffer to store the shared data from all processes
           Node *sharedNodes = (Node *)malloc(halfSize * sizeof(Node));
@@ -698,61 +687,21 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                          receivedNodes, recvCounts, recvDispls, myNode,
                          MPI_COMM_WORLD);
 
-          // // Step 7: Add new nodes to the pool
-          // pushBackBulk(&multiPool[MPIRank], receivedNodes, totalReceived);
-          // printf("Proc[%d] Thread[%d], before pushBackBulk\n", MPIRank, gpuID);
-          // pushBackBulk(&multiPool[1], receivedNodes, totalReceived);
-          // printf("Proc[%d] Thread[%d], after pushBackBulk\n", MPIRank, gpuID);
           // Step 7 : Reincorporate shared nodes into the parents vector
           int nodesPerProcess = totalReceived / commSize; // Number of nodes each process will recover from every other process
           int remainder = totalReceived % commSize;       // Remainder to handle uneven distribution
 
-          // Step 7.1: Remove halfSize from poolSize (already done in your code)
-          poolSize -= halfSize; // This is already done in your code
+          // Remove halfSize from poolSize
+          poolSize -= halfSize;
 
-          // // Step 7.2: Iterate through each processor's shared data
-          // for (int src = 0; src < commSize; src++)
-          // {
-          //   // Calculate the starting and ending indices for the current source process's shared data
-          //   int startIndex = recvDispls[src];
-          //   int endIndex = startIndex + recvCounts[src];
-
-          //   // Step 7.3: Distribute the shared data from the current source process to all processes
-          //   for (int i = 0; i < nodesPerProcess; i++)
-          //   {
-          //     // Calculate the index in receivedNodes for the current node
-          //     int receivedIndex = startIndex + i;
-
-          //     // Calculate the index in parents where the node will be reincorporated
-          //     int parentIndex = poolSize + (src * nodesPerProcess) + i;
-
-          //     // Reincorporate the node into the parents vector
-          //     parents[parentIndex] = receivedNodes[receivedIndex];
-          //   }
-
-          // // Step 7.4: Handle the remainder (if any)
-          // if (remainder > 0 && src < remainder)
-          // {
-          //   // Calculate the index in receivedNodes for the extra node
-          //   int receivedIndex = startIndex + nodesPerProcess * commSize + src;
-
-          //   // Calculate the index in parents where the extra node will be reincorporated
-          //   int parentIndex = poolSize + (src * nodesPerProcess) + nodesPerProcess + src;
-
-          //   // Reincorporate the extra node into the parents vector
-          //   parents[parentIndex] = receivedNodes[receivedIndex];
-          // }
-          // }
-
-          // // Step 7.5: Update poolSize by adding the reincorporated nodes
-          // poolSize += (nodesPerProcess * commSize) + (remainder > 0 ? remainder : 0);
+          // Nodes process per each process
           int added = 0;
           for (int k = 0; k < nodesPerProcess; k++)
           {
             parents[poolSize + k] = receivedNodes[k * commSize + MPIRank];
             added++;
           }
-
+          // Remainder per each process (if any)
           if (remainder > 0 && MPIRank < remainder)
           {
             parents[poolSize + nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
@@ -760,30 +709,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           }
           poolSize += added;
 
-          // Step 7.5: Check if poolSize exceeds M
+          // Check if poolSize exceeds M
           if (poolSize > M)
-          {
             fprintf(stderr, "Proc[%d] Thread[%d] Warning: poolSize (%d) exceeds M (%d)\n", MPIRank, gpuID, poolSize, M);
-          }
 
-          // Step 7.6: Free allocated memory
+          // Free allocated memory
           free(sharedNodes);
           free(receivedNodes);
         }
-        // check the values of all the sizes of multiPool (array of size number of threads, which is D), a struct containing an integer called size
-        // if for every of these sizes, we have a value lower than m, then we set a flag with value 0, otherwise if there is at least one of the multiPool
-        // with size bigger than m we set a flag with value 1, we do an allgather of these values to set a global termination detection between the multi-threads of each MPI process
-
-        // separate half of parents array of size poolSize (even if it is zero) to be partitioned between the other processes
-        //  notice that, for instance, what process 0 may send to other process may be different to each process if the half of poolSize cannot be divide equally among them
-        //  in this case the last process must be penalized with the least amount of work
-        //  do an allgather of these values, notice that for every process he will have to send information to every other process, so I suppose that this vector must be of size processes times processes
-        //  so that each block of number of processes correspond to the information send by the adequate process
-
-        // if i receive work put on the pool
       }
-
-//#pragma omp barrier
 
       if (global_termination_flag)
         break;
