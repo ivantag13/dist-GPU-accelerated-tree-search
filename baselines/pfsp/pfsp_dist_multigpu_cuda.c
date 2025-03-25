@@ -641,29 +641,47 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         // If no Termination, we proceed to work sharing
         if (!global_termination_flag)
         {
-          // Step 1: Calculate the size of the shared data (last half of parents)
-          int halfSize = poolSize / 2;
-          if (poolSize % 2 != 0)
-            halfSize++; // Adjust for odd poolSize
-
-          // Step 2: Allocate a buffer to store the shared data from all processes
-          Node *sharedNodes = (Node *)malloc(halfSize * sizeof(Node));
-          if (sharedNodes == NULL)
+          // New Step 1 : Determine and separate the amount of shared data
+          Node *sharedNodes = (Node *)malloc(sizeof(Node));
+          int sharedSize = 0;
+          int halfSizes;
+          for (int j = 0; j < gpuID; j++)
           {
-            fprintf(stderr, "Proc[%d] Thread[%d] Memory allocation failed for sharedNodes\n", MPIRank, gpuID);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+            Node *sharedNodesPartial;
+            sharedNodesPartial = popBackBulkHalf(&multiPool[j], m, M, &halfSizes);
+            // sharedSize += halfSizes;
+            if (halfSizes > 0)
+            {
+              sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
+              for (int k = 0; k < halfSizes; k++)
+                sharedNodes[sharedSize + k] = sharedNodesPartial[k];
+              sharedSize += halfSizes;
+            }
           }
 
-          // Copy the last half of the parents array into the sharedNodes buffer
-          memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
+          // // Step 1: Calculate the size of the shared data (last half of parents)
+          // int halfSize = poolSize / 2;
+          // if (poolSize % 2 != 0)
+          //   halfSize++; // Adjust for odd poolSize
+
+          // // Step 2: Allocate a buffer to store the shared data from all processes
+          // Node *sharedNodes = (Node *)malloc(halfSize * sizeof(Node));
+          // if (sharedNodes == NULL)
+          // {
+          //   fprintf(stderr, "Proc[%d] Thread[%d] Memory allocation failed for sharedNodes\n", MPIRank, gpuID);
+          //   MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+          // }
+
+          // // Copy the last half of the parents array into the sharedNodes buffer
+          // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
 
           // Step 3: Gather the sizes of the shared data from all processes
           int sendCounts[commSize];
           int recvCounts[commSize];
           int recvDispls[commSize];
 
-          // Each process sends its halfSize to all other processes
-          MPI_Allgather(&halfSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
+          // Each process sends its sharedSize to all other processes
+          MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
 
           // Step 4: Calculate displacements for the received data
           int totalReceived = 0;
@@ -683,7 +701,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           }
 
           // Step 6: Gather all shared data into the receivedNodes buffer
-          MPI_Allgatherv(sharedNodes, halfSize, myNode,
+          MPI_Allgatherv(sharedNodes, sharedSize, myNode,
                          receivedNodes, recvCounts, recvDispls, myNode,
                          MPI_COMM_WORLD);
 
@@ -692,26 +710,29 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           int remainder = totalReceived % commSize;       // Remainder to handle uneven distribution
 
           // Remove halfSize from poolSize
-          poolSize -= halfSize;
+          // poolSize -= halfSize;
 
           // Nodes process per each process
+          Node *insertNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
+
           int added = 0;
           for (int k = 0; k < nodesPerProcess; k++)
           {
-            parents[poolSize + k] = receivedNodes[k * commSize + MPIRank];
+            insertNodes[poolSize + k] = receivedNodes[k * commSize + MPIRank];
             added++;
           }
           // Remainder per each process (if any)
           if (remainder > 0 && MPIRank < remainder)
           {
-            parents[poolSize + nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
+            insertNodes[poolSize + nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
             added++;
           }
-          poolSize += added;
+          // poolSize += added;
 
           // Check if poolSize exceeds M
-          if (poolSize > M)
-            fprintf(stderr, "Proc[%d] Thread[%d] Warning: poolSize (%d) exceeds M (%d)\n", MPIRank, gpuID, poolSize, M);
+          // if (poolSize > M)
+          //  fprintf(stderr, "Proc[%d] Thread[%d] Warning: poolSize (%d) exceeds M (%d)\n", MPIRank, gpuID, poolSize, M);
+          pushBackBulk(pool_loc, insertNodes, added);
 
           // Free allocated memory
           free(sharedNodes);

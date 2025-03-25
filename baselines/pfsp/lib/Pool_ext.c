@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <math.h>
 
-void initSinglePool_ext(SinglePool_ext* pool)
+void initSinglePool_ext(SinglePool_ext *pool)
 {
-  pool->elements = (Node*)malloc(INITIAL_CAPACITY * sizeof(Node));
+  pool->elements = (Node *)malloc(INITIAL_CAPACITY * sizeof(Node));
   pool->capacity = INITIAL_CAPACITY;
   pool->front = 0;
   pool->size = 0;
@@ -12,12 +12,16 @@ void initSinglePool_ext(SinglePool_ext* pool)
 }
 
 // Parallel-safe insertion to the end of the deque.
-void pushBack(SinglePool_ext* pool, Node node) {
+void pushBack(SinglePool_ext *pool, Node node)
+{
   bool expected;
-  while (true) {
+  while (true)
+  {
     expected = false;
-    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true)) {
-      if (pool->front + pool->size >= pool->capacity) {
+    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true))
+    {
+      if (pool->front + pool->size >= pool->capacity)
+      {
         pool->capacity *= 2;
         pool->elements = realloc(pool->elements, pool->capacity * sizeof(Node));
       }
@@ -31,12 +35,16 @@ void pushBack(SinglePool_ext* pool, Node node) {
 }
 
 // Parallel-safe bulk insertion to the end of the deque.
-void pushBackBulk(SinglePool_ext* pool, Node* nodes, int size) {
+void pushBackBulk(SinglePool_ext *pool, Node *nodes, int size)
+{
   bool expected;
-  while (true) {
+  while (true)
+  {
     expected = false;
-    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true)) {
-      if (pool->front + pool->size + size >= pool->capacity) {
+    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true))
+    {
+      if (pool->front + pool->size + size >= pool->capacity)
+      {
         pool->capacity *= pow(2, ceil(log2((double)(pool->front + pool->size + size) / pool->capacity)));
         pool->elements = realloc(pool->elements, pool->capacity * sizeof(Node));
       }
@@ -51,18 +59,24 @@ void pushBackBulk(SinglePool_ext* pool, Node* nodes, int size) {
 }
 
 // Parallel-safe removal from the end of the deque.
-Node popBack(SinglePool_ext* pool, int* hasWork) {
+Node popBack(SinglePool_ext *pool, int *hasWork)
+{
   bool expected;
-  while (true) {
+  while (true)
+  {
     expected = false;
-    if (atomic_compare_exchange_strong(&(pool->lock), &expected, false)) {
-      if (pool->size > 0) {
+    if (atomic_compare_exchange_strong(&(pool->lock), &expected, false))
+    {
+      if (pool->size > 0)
+      {
         *hasWork = 1;
         pool->size -= 1;
         Node elt = pool->elements[pool->front + pool->size];
         atomic_store(&pool->lock, false);
         return elt;
-      } else {
+      }
+      else
+      {
         atomic_store(&(pool->lock), false);
         break;
       }
@@ -73,8 +87,10 @@ Node popBack(SinglePool_ext* pool, int* hasWork) {
 }
 
 // Removal from the end of the deque. Parallel-safety is not guaranteed.
-Node popBackFree(SinglePool_ext* pool, int* hasWork) {
-  if (pool->size > 0) {
+Node popBackFree(SinglePool_ext *pool, int *hasWork)
+{
+  if (pool->size > 0)
+  {
     *hasWork = 1;
     pool->size -= 1;
     return pool->elements[pool->front + pool->size];
@@ -84,19 +100,24 @@ Node popBackFree(SinglePool_ext* pool, int* hasWork) {
 }
 
 // Parallel-safe bulk removal from the end of the deque.
-int popBackBulk(SinglePool_ext* pool, const int m, const int M, Node* parents) {
+int popBackBulk(SinglePool_ext *pool, const int m, const int M, Node *parents)
+{
   bool expected;
-  while (true) {
+  while (true)
+  {
     expected = false;
-    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true)) {
-      if (pool->size < m) {
+    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true))
+    {
+      if (pool->size < m)
+      {
         atomic_store(&(pool->lock), false);
         break;
       }
-      else {
+      else
+      {
         int poolSize = MIN(pool->size, M);
         pool->size -= poolSize;
-        for(int i = 0; i < poolSize; i++)
+        for (int i = 0; i < poolSize; i++)
           parents[i] = pool->elements[pool->front + pool->size + i];
         atomic_store(&(pool->lock), false);
         return poolSize;
@@ -108,11 +129,43 @@ int popBackBulk(SinglePool_ext* pool, const int m, const int M, Node* parents) {
 }
 
 // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
-Node* popBackBulkFree(SinglePool_ext* pool, const int m, const int M, int* poolSize) {
-  if (pool->size >= 2*m) {
-    *poolSize = pool->size/2;
+Node *popBackBulkHalf(SinglePool_ext *pool, const int m, const int M, int *Half)
+{
+  bool expected;
+  while (true)
+  {
+    expected = false;
+    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true))
+    {
+      if (pool->size < 2 * m)
+      {
+        atomic_store(&(pool->lock), false);
+        break;
+      }
+      else
+      {
+        *Half = pool->size / 2;
+        pool->size -= *Half;
+        Node *parents = (Node *)malloc(*Half * sizeof(Node));
+        for (int i = 0; i < *Half; i++)
+          parents[i] = pool->elements[pool->front + pool->size + i];
+        atomic_store(&(pool->lock), false);
+        return parents;
+      }
+    }
+  }
+  *Half = 0;
+  return NULL;
+}
+
+// Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
+Node *popBackBulkFree(SinglePool_ext *pool, const int m, const int M, int *poolSize)
+{
+  if (pool->size >= 2 * m)
+  {
+    *poolSize = pool->size / 2;
     pool->size -= *poolSize;
-    Node* parents = (Node*)malloc(*poolSize * sizeof(Node));
+    Node *parents = (Node *)malloc(*poolSize * sizeof(Node));
     for (int i = 0; i < *poolSize; i++)
       parents[i] = pool->elements[pool->front + pool->size + i];
     return parents;
@@ -123,9 +176,10 @@ Node* popBackBulkFree(SinglePool_ext* pool, const int m, const int M, int* poolS
 }
 
 // Removal from the front of the deque. Parallel-safety is not guaranteed.
-Node popFrontFree(SinglePool_ext* pool, int* hasWork)
+Node popFrontFree(SinglePool_ext *pool, int *hasWork)
 {
-  if (pool->size > 0) {
+  if (pool->size > 0)
+  {
     *hasWork = 1;
     pool->size--;
     return pool->elements[pool->front++];
@@ -135,11 +189,13 @@ Node popFrontFree(SinglePool_ext* pool, int* hasWork)
 }
 
 // Bulk removal from the front of the deque. Parallel-safety is not guaranteed.
-Node* popFrontBulkFree(SinglePool_ext* pool, const int m, const int M, int* poolSize, double perc) {
-  if (pool->size >= 2*m) {
-    *poolSize = pool->size*perc;
+Node *popFrontBulkFree(SinglePool_ext *pool, const int m, const int M, int *poolSize, double perc)
+{
+  if (pool->size >= 2 * m)
+  {
+    *poolSize = pool->size * perc;
     pool->size -= *poolSize;
-    Node* parents = (Node*)malloc(*poolSize * sizeof(Node));
+    Node *parents = (Node *)malloc(*poolSize * sizeof(Node));
     for (int i = 0; i < *poolSize; i++)
       parents[i] = pool->elements[pool->front + i];
     pool->front += *poolSize;
@@ -177,6 +233,7 @@ Node* popFrontBulkFree(SinglePool_ext* pool, const int m, const int M, int* pool
   }*/
 
 // Free the memory.
-void deleteSinglePool_ext(SinglePool_ext* pool) {
+void deleteSinglePool_ext(SinglePool_ext *pool)
+{
   free(pool->elements);
 }
