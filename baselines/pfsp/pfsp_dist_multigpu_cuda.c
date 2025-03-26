@@ -617,6 +617,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     while (1)
     {
+      counter++;
       if (global_termination_flag)
       {
         // printf("From Proc[%d] Thread[%d] Global Termination Reached\n", MPIRank, gpuID);
@@ -644,11 +645,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         if (termination == 0) // || allTasksIdleFlag == true) // not only termination has to be checked, but also the poolSizes of other threads
           global_termination_flag = 1;
 
+        // If no Termination, we proceed to work sharing
+        if (!global_termination_flag)
+        {
+
+          // if (counter % 50 == 0)
+          //   printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
+        }
+
         // If no Termination, we proceed to work sharing/work stealing (all is done within this if condition)
         if (!global_termination_flag)
         {
           // New Step 1 : Determine and separate the amount of shared data
-          Node *sharedNodes = (Node *)malloc(sizeof(Node));
+          Node *sharedNodes = NULL; // = (Node *)malloc(sizeof(Node));
           int sharedSize = 0;
           int halfSizes;
           for (int j = 0; j < D; j++)
@@ -658,28 +667,18 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             // sharedSize += halfSizes;
             if (halfSizes > 0)
             {
-              sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
+              if (sharedNodes == NULL)
+                sharedNodes = (Node *)malloc(halfSizes * sizeof(Node));
+              else
+                sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
+              // Optimization
+              // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
               for (int k = 0; k < halfSizes; k++)
                 sharedNodes[sharedSize + k] = sharedNodesPartial[k];
               sharedSize += halfSizes;
+              free(sharedNodesPartial);
             }
           }
-
-          // // Step 1: Calculate the size of the shared data (last half of parents)
-          // int halfSize = poolSize / 2;
-          // if (poolSize % 2 != 0)
-          //   halfSize++; // Adjust for odd poolSize
-
-          // // Step 2: Allocate a buffer to store the shared data from all processes
-          // Node *sharedNodes = (Node *)malloc(halfSize * sizeof(Node));
-          // if (sharedNodes == NULL)
-          // {
-          //   fprintf(stderr, "Proc[%d] Thread[%d] Memory allocation failed for sharedNodes\n", MPIRank, gpuID);
-          //   MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-          // }
-
-          // // Copy the last half of the parents array into the sharedNodes buffer
-          // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
 
           // Step 3: Gather the sizes of the shared data from all processes
           int sendCounts[commSize];
@@ -688,6 +687,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
           // Each process sends its sharedSize to all other processes
           MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
+          if (counter % 100 == 0)
+            printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
 
           // Step 4: Calculate displacements for the received data
           int totalReceived = 0;
@@ -697,6 +698,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             recvDispls[i] = totalReceived;
             totalReceived += recvCounts[i];
           }
+          if (counter % 100 == 0)
+            printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
 
           // Step 5: Allocate a buffer to store all received shared data
           Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
@@ -715,30 +718,26 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           int nodesPerProcess = totalReceived / commSize; // Number of nodes each process will recover from every other process
           int remainder = totalReceived % commSize;       // Remainder to handle uneven distribution
 
-          // Remove halfSize from poolSize
-          // poolSize -= halfSize;
-
           // Nodes process per each process
           Node *insertNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
 
           int added = 0;
           for (int k = 0; k < nodesPerProcess; k++)
           {
-            insertNodes[poolSize + k] = receivedNodes[k * commSize + MPIRank];
+            insertNodes[k] = receivedNodes[k * commSize + MPIRank];
             added++;
           }
           // Remainder per each process (if any)
           if (remainder > 0 && MPIRank < remainder)
           {
-            insertNodes[poolSize + nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
+            insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
             added++;
           }
-          // poolSize += added;
 
-          // Check if poolSize exceeds M
-          // if (poolSize > M)
-          //  fprintf(stderr, "Proc[%d] Thread[%d] Warning: poolSize (%d) exceeds M (%d)\n", MPIRank, gpuID, poolSize, M);
-          pushBackBulk(pool_loc, insertNodes, added);
+          if (counter % 100 == 0)
+            printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
+
+          pushBackBulk(&multiPool[0], insertNodes, added);
 
           // Free allocated memory
           free(sharedNodes);
@@ -751,7 +750,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         /*
           Each task gets its parenst nodes from the pool
         */
-        counter++;
+        //counter++;
         int poolSize = popBackBulk(pool_loc, m, M, parents);
         poolSizes_all[gpuID] = poolSize;
 
