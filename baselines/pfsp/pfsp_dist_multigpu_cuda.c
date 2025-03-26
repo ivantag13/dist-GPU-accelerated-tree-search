@@ -607,6 +607,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int global_flags[commSize];
     int counter = 0;
 
+    // printf("Proc[%d] Thread[%d] Before While Improv versions\n", MPIRank, gpuID);
     while (1)
     {
       /*
@@ -642,20 +643,24 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         if (!global_termination_flag)
         {
           // New Step 1 : Determine and separate the amount of shared data
-          Node *sharedNodes = (Node *)malloc(sizeof(Node));
+          Node *sharedNodes = NULL; // = (Node *)malloc(sizeof(Node));
           int sharedSize = 0;
           int halfSizes;
-          for (int j = 0; j < gpuID; j++)
+          for (int j = 0; j < D; j++)
           {
             Node *sharedNodesPartial;
             sharedNodesPartial = popBackBulkHalf(&multiPool[j], m, M, &halfSizes);
             // sharedSize += halfSizes;
             if (halfSizes > 0)
             {
-              sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
+              if (sharedNodes == NULL)
+                sharedNodes = (Node *)malloc(halfSizes * sizeof(Node));
+              else
+                sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
               for (int k = 0; k < halfSizes; k++)
                 sharedNodes[sharedSize + k] = sharedNodesPartial[k];
               sharedSize += halfSizes;
+              free(sharedNodesPartial);
             }
           }
 
@@ -682,7 +687,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
           // Each process sends its sharedSize to all other processes
           MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
-
+          //if (counter % 50 == 0)
+          //  printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
           // Step 4: Calculate displacements for the received data
           int totalReceived = 0;
           for (int i = 0; i < commSize; i++)
@@ -691,6 +697,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             recvDispls[i] = totalReceived;
             totalReceived += recvCounts[i];
           }
+
+          //if (counter % 50 == 0)
+          //  printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
 
           // Step 5: Allocate a buffer to store all received shared data
           Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
@@ -718,15 +727,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           int added = 0;
           for (int k = 0; k < nodesPerProcess; k++)
           {
-            insertNodes[poolSize + k] = receivedNodes[k * commSize + MPIRank];
+            insertNodes[k] = receivedNodes[k * commSize + MPIRank];
             added++;
           }
           // Remainder per each process (if any)
           if (remainder > 0 && MPIRank < remainder)
           {
-            insertNodes[poolSize + nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
+            insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
             added++;
           }
+
+          //if (counter % 50 == 0)
+          //  printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
+
           // poolSize += added;
 
           // Check if poolSize exceeds M
