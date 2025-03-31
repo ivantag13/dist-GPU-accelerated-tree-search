@@ -535,7 +535,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     pool_lloc.size += l - c;
   }
 
-  // EVENTUAL USUAL VARIABLES
+  // EVENTUAL USEFUL VARIABLES
   // cudaSetDevice(0);
   // int nSteal = 0, nSSteal = 0;
   // int best_l = *best;
@@ -617,7 +617,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   {
     int poolSize = popBackBulk(&pool_lloc, m, M, parents);
     // MPI_Win_sync(win_sizes);
-    MPI_Win_sync(win_requests);
+    //MPI_Win_sync(win_requests);
     // MPI_Win_sync(win_nodes);
     // MPI_Win_flush_all(win_requests);
     if (poolSize > 0)
@@ -666,12 +666,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
                         &eachLocaleExploredTree, &eachLocaleExploredSol, best, &pool_lloc);
 
       // Answer WS requests after a complete round of bounding+pruning+branching
+      MPI_Win_sync(win_requests);
       int tries = 0;
       int requests[commSize];
       permute(requests, commSize); // Introduce some randomness
 
-      for (int i = 0; i < commSize; i++)
-        printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
+      // for (int i = 0; i < commSize; i++)
+      //   printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
 
       while (tries < commSize && pool_lloc.size > 2 * m)
       { // WS0 loop
@@ -890,6 +891,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       // This termination condition is not 'ideal' for distributed level
       if (remoteSteal == false)
       {
+        printf("Proc[%d] Are we all done ?\n", MPIRank);
         if (atomic_load(&localeState) == BUSY)
           atomic_store(&localeState, IDLE);
 
