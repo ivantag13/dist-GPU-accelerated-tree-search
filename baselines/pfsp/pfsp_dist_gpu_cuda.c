@@ -4,7 +4,6 @@
 
 // for k in {29,30,22,27,23}; do for i in {1..3}; do mpirun --hostfile hostfile --map-by ppr:1:node -mca pml ucx --mca btl ^openib -np 1 ./pfsp_dist_gpu_cuda.out -i ${k} -l 2 -m 25; done; done;
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -480,6 +479,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     MPI_Abort(MPI_COMM_WORLD, err);
   }
 
+  int *steal_responses;
+  MPI_Win win_responses;
+  err = MPI_Win_allocate(commSize * sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &steal_responses, &win_responses);
+
+  if (err != MPI_SUCCESS || steal_responses == NULL)
+  {
+    char err_string[MPI_MAX_ERROR_STRING];
+    int err_length;
+    MPI_Error_string(err, err_string, &err_length);
+    fprintf(stderr, "MPI_Win_allocate for requests failed: %s\n", err_string);
+    MPI_Abort(MPI_COMM_WORLD, err);
+  }
+
   int *steal_sizes;
   MPI_Win win_sizes;
   err = MPI_Win_allocate(commSize * sizeof(int), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &steal_sizes, &win_sizes);
@@ -511,13 +523,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   {
     // From 0 to 'commSize - 1' indicates which MPIRank contributed with work
     // '-2' indicates the need of work
-    steal_request[i] = -1; // BUSY
+    steal_request[i] = 0; // BUSY
+    steal_responses[i] = 0;
     steal_sizes[i] = 0;
   }
 
-  MPI_Win_sync(win_sizes);
-  MPI_Win_sync(win_requests);
-  MPI_Win_sync(win_nodes);
+  // MPI_Win_sync(win_sizes);
+  // MPI_Win_sync(win_requests);
+  // MPI_Win_sync(win_nodes);
   MPI_Barrier(MPI_COMM_WORLD);
 
   // each MPI process gets its chunk
@@ -609,17 +622,17 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int stolen = 0;
 
   int amount_nodes = 0;
+  int counter = 0;
   // double time1, time2, time1Idle, time2Idle, put_sizes = 0, put_request = 0, put_nodes = 0, compare_request = 0, sync_sizes = 0,
   //   time1GPUWork, time2GPUWork, GPUWork = 0, GPUTime = 0, IdleTime = 0, cpyParents = 0, cpyBounds = 0, cpyKernel = 0;
 
   // cudaSetDevice(MPIRank);
+
+  printf("Proc[%d] I'm all good just before the while\n", MPIRank);
   while (1)
   {
+    counter++;
     int poolSize = popBackBulk(&pool_lloc, m, M, parents);
-    // MPI_Win_sync(win_sizes);
-    //MPI_Win_sync(win_requests);
-    // MPI_Win_sync(win_nodes);
-    // MPI_Win_flush_all(win_requests);
     if (poolSize > 0)
     {
       // time1GPUWork = omp_get_wtime();
@@ -635,29 +648,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       const int numBounds = jobs * poolSize;
       const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
 
-      // time1 = omp_get_wtime();
-      // clock_gettime(CLOCK_MONOTONIC_RAW, &endTime);
-      //  TO DO: use OpenMP to accelerate evaluation of evaluate_gpu and generate_children
       cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
-      // time2 = omp_get_wtime();
-      // cpyParents += time2 - time1;
-      // clock_gettime(CLOCK_MONOTONIC_RAW, &endTime);
-      // double t1 = (endTime.tv_sec - startTime.tv_sec) + (endTime.tv_nsec - startTime.tv_nsec) / 1e9;
-
-      // time1 = omp_get_wtime();
-      //  numBounds is the 'size' of the problem
       evaluate_gpu(jobs, lb, numBounds, nbBlocks, &eachLocaleBest, lbound1_d, lbound2_d, parents_d, bounds_d);
       cudaDeviceSynchronize();
-      // time2 = omp_get_wtime();
-      // cpyKernel += time2 - time1;
-
-      // time1 = omp_get_wtime();
       cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
-      // cudaDeviceSynchronize();
-      // time2 = omp_get_wtime();
-      // cpyBounds += time2 - time1;
-
-      // GPUTime += (cpyBounds + cpyKernel + cpyParents);
 
       /*
         each task generates and inserts its children nodes to the pool.
@@ -666,105 +660,84 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
                         &eachLocaleExploredTree, &eachLocaleExploredSol, best, &pool_lloc);
 
       // Answer WS requests after a complete round of bounding+pruning+branching
-      MPI_Win_sync(win_requests);
-      int tries = 0;
+      int flagShared = 0;
+      int flagNonShared = -1;
       int requests[commSize];
       permute(requests, commSize); // Introduce some randomness
 
-      // for (int i = 0; i < commSize; i++)
-      //   printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
-
-      while (tries < commSize && pool_lloc.size > 2 * m)
-      { // WS0 loop
-        // MPI_Win_sync(win_sizes);
-        // MPI_Win_sync(win_requests);
-        // MPI_Win_sync(win_nodes);
+      MPI_Win_sync(win_requests);
+      MPI_Win_sync(win_responses);
+      for (int tries = 0; tries < commSize; tries++)
+      {
         int requestID = requests[tries];
 
-        if (steal_request[requestID] == -1 || requestID == MPIRank || steal_request[requestID] >= 0) // BUSY worker or MYself or Request attended
+        if (requestID == MPIRank)
+          continue;
+
+        // Validate request ID
+        if (requestID < 0 || requestID >= commSize)
         {
-          nSteal++;
-          tries++;
+          printf("Rank %d: Invalid requestID %d\n", MPIRank, requestID);
           continue;
         }
-        else if (steal_request[requestID] == -2) // Can send work
+
+        if (steal_request[requestID] == 1)
         {
-          int expected = -2;       // Expected old value
-          int new_value = MPIRank; // New value to set
-          int old_value;           // Buffer for the old value
-
-          // time1 = omp_get_wtime();
-          //  Lock the window for atomic access
-          MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_requests);
-          MPI_Compare_and_swap(&new_value, &expected, &old_value, MPI_INT, requestID, requestID, win_requests);
-          // MPI_Win_sync(win_requests);
-          MPI_Win_unlock(requestID, win_requests); // Unlock after atomic operation
-          // nSSteal++;
-          // time2 = omp_get_wtime();
-          printf("Proc[%d] I did my MPI_compare_and_swap\n", MPIRank);
-          // compare_request += time2 - time1;
-
-          // If successful, notify
-          if (old_value == -2)
+          if (pool_lloc.size < 2 * m || flagShared == 1) // Reject request
           {
-            steal_request[requestID] = -1;
-            // int amount_nodes;
+            nSteal++;
+
+            MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_responses);
+            MPI_Put(&flagNonShared, 1, MPI_INT, requestID, MPIRank, 1, MPI_INT, win_responses);
+            MPI_Win_flush(requestID, win_responses);
+            // MPI_Win_flush_all(win_responses);
+            MPI_Win_unlock(requestID, win_responses);
+          }
+          else if (flagShared == 0) // Accept request
+          {
+            flagShared = 1;
+            // ATTENTION : If work stealing is succesful this should come back
+            // steal_request[requestID] = 0;
             (pool_lloc.size > 2 * capacity_per_proc) ? (amount_nodes = capacity_per_proc) : (amount_nodes = pool_lloc.size / 2);
             stolen += amount_nodes;
-            printf("Proc[%d] Is successful amount_nodes = %d\n", MPIRank, amount_nodes);
-            // I send the nodes
-            Node *nodes = popBackBulkFreeN(&pool_lloc, m, M, &amount_nodes);
-            if (amount_nodes == 0)
-            {
-              printf("ERROR Pool_lloc size is 0 on PopBackBulkFreeN\n");
-              exit(-1);
-            }
+            printf("Proc[%d] Gives amount_nodes = %d to RequestProc[%d], counter=%d\n", MPIRank, amount_nodes, requestID, counter);
 
-            // time1 = omp_get_wtime();
+            // Node *nodes = popBackBulkFreeN(&pool_lloc, m, M, &amount_nodes);
+            // if (amount_nodes == 0)
+            // {
+            //   printf("ERROR Pool_lloc size is 0 on PopBackBulkFreeN\n");
+            //   exit(-1);
+            // }
 
+            // // time1 = omp_get_wtime();
             // MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_nodes);
             // MPI_Put(nodes, amount_nodes * sizeof(Node), MPI_BYTE, requestID, MPIRank * capacity_per_proc, amount_nodes * sizeof(Node), MPI_BYTE, win_nodes);
-            // // MPI_Win_flush(requestID, win_nodes);
-            // MPI_Win_flush_all(win_nodes);
-            // MPI_Win_sync(win_nodes);
-            // MPI_Win_unlock(requestID, win_nodes); // Unlock after atomic operation
+            // MPI_Win_flush(requestID, win_nodes);
+            // // MPI_Win_flush_all(win_nodes);
+            // MPI_Win_unlock(requestID, win_nodes);
 
-            // MPI_Win_sync(win_nodes);
-            // time2 = omp_get_wtime();
+            // // time2 = omp_get_wtime();
+            // // put_nodes += time2 - time1;
+            // // time1 = omp_get_wtime();
 
-            // put_nodes += time2 - time1;
-
-            // Update size after sending nodes
-            // Nodes arrive before size
-            // Target process does not try to access nodes that still did not exist for him
-            // time1 = omp_get_wtime();
-
-            // THE ERROR IS HEREEEEEEEEEEE =================================/////////////////////////////////////////////////
-            // AHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHAAAAAAAAAAAAAAAAAAAAHHHHHHHHHHHHHHHH/////
             // MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_sizes);
             // MPI_Put(&amount_nodes, 1, MPI_INT, requestID, MPIRank, 1, MPI_INT, win_sizes);
-            // MPI_Win_flush(requestID, win_sizes);
+            // // MPI_Win_flush(requestID, win_sizes);
             // MPI_Win_flush_all(win_sizes);
-            // MPI_Win_sync(win_sizes);
             // MPI_Win_unlock(requestID, win_sizes);
 
-            // USING MPI_SEND instead
-            MPI_Send(&amount_nodes, 1, MPI_INT, requestID, 2, MPI_COMM_WORLD);
+            MPI_Win_lock(MPI_LOCK_EXCLUSIVE, requestID, 0, win_responses);
+            MPI_Put(&flagShared, 1, MPI_INT, requestID, MPIRank, 1, MPI_INT, win_responses);
+            MPI_Win_flush(requestID, win_responses);
+            // MPI_Win_flush_all(win_responses);
+            MPI_Win_unlock(requestID, win_responses);
 
-            MPI_Send(nodes, amount_nodes * sizeof(Node), MPI_BYTE, requestID, 1, MPI_COMM_WORLD);
-
-            // MPI_Win_sync(win_sizes);
             // time2 = omp_get_wtime();
-
             // put_sizes += time2 - time1;
 
-            // pool_lloc.size -= amount_nodes;
-
-            printf("After Put: Proc[%d] gave [%d] work to RequestProc[%d]\n", MPIRank, amount_nodes, requestID);
+            printf("After Put/Send: Proc[%d] gave [%d] work to RequestProc[%d] counter=%d\n", MPIRank, amount_nodes, requestID, counter);
             nSSteal++;
-            break; // Break While
           }
-          tries++;
         }
       }
       // time2GPUWork = omp_get_wtime();
@@ -776,55 +749,82 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       //  One MPI process = no Work-Stealing
       if (commSize == 1)
         break;
-      // TO-DO: Distributed Work-Stealing per request
-      bool remoteSteal = true;
-      // int tries = 0;
 
-      // '-2' indicates steal request
-      steal_request[MPIRank] = -2;
-      printf("Proc [%d] Before sending steal request\n", MPIRank);
+      // Distributed Work-Stealing per request
+      bool remoteSteal = true;
+      steal_request[MPIRank] = 1; // '1' indicates steal request
+      printf("Proc [%d] Sends steal request, counter=%d\n", MPIRank, counter);
+
       // time1 = omp_get_wtime();
-      for (int j = 0; j < commSize; j++)
+      for (int j = 0; j < commSize; j++) // Asking for work
       {
-        if (j == MPIRank)
-          continue; // Skip self
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, j, 0, win_requests);
-        MPI_Put(&steal_request[MPIRank], 1, MPI_INT, j, MPIRank, 1, MPI_INT, win_requests);
-        // MPI_Win_flush(j, win_requests);
-        MPI_Win_flush_all(win_requests);
-        MPI_Win_sync(win_requests);
-        MPI_Win_unlock(j, win_requests);
+        if (j != MPIRank)
+        {
+          MPI_Win_lock(MPI_LOCK_EXCLUSIVE, j, 0, win_requests);
+          MPI_Put(&steal_request[MPIRank], 1, MPI_INT, j, MPIRank, 1, MPI_INT, win_requests);
+          // MPI_Win_flush(j, win_requests);
+          MPI_Win_flush_all(win_requests);
+          MPI_Win_unlock(j, win_requests);
+        }
       }
       // time2 = omp_get_wtime();
       // put_request += time2 - time1;
 
-      // MPI_Win_sync(win_sizes);
-      // MPI_Win_sync(win_requests);
-      // MPI_Win_sync(win_nodes);
-
-      while (steal_request[MPIRank] == -2 || steal_request[MPIRank] >= 0)
+      while (steal_request[MPIRank] == 1) // I have no work
       {
+        MPI_Win_sync(win_requests);
+
         int sum = 0;
-        for (int j = 0; j < commSize; j++) // We check if all of them are asking for work
-          sum += steal_request[j];
-
-        int responder = steal_request[MPIRank];
-
-        // printf("Responder == %d, sum == %d\n", responder, sum);
-        MPI_Win_sync(win_nodes);
-        MPI_Win_sync(win_sizes);
-
-        if (responder >= 0)
+        for (int checkRequests = 0; checkRequests < commSize; checkRequests++)
         {
-          printf("Proc[%d] has answer from StolenProc[%d]\n", MPIRank, responder);
-          printf("Proc[%d] got [%d] work from StolenProc[%d]\n", MPIRank, steal_sizes[responder], responder);
-          MPI_Recv(&steal_sizes[responder], 1, MPI_INT, responder, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          sum += steal_request[checkRequests]; // Check if none has work anymore
+          // if (checkRequests != MPIRank)        // I skip myself
+          //   continue;
+          // if (steal_request[checkRequests] == 1) // I tell others asking work I cannot share work
+          // {
+          //   int flagNonShared = -1;
+          //   MPI_Win_lock(MPI_LOCK_EXCLUSIVE, checkRequests, 0, win_responses);
+          //   MPI_Put(&flagNonShared, 1, MPI_INT, checkRequests, MPIRank, 1, MPI_INT, win_responses);
+          //   // MPI_Win_flush(checkRequests, win_responses);
+          //   MPI_Win_flush_all(win_responses);
+          //   MPI_Win_unlock(checkRequests, win_responses);
+          //   steal_request[checkRequests] = 0; // I ignore who asks me work
+          // }
+        }
+
+        int countResponses = 0;
+        for (int checkReponses = 0; checkReponses < commSize; checkReponses++)
+        {
+          if (checkReponses == MPIRank)
+            continue;
+          if (steal_responses[checkReponses] == -1 || steal_responses[checkReponses] == 1)
+            countResponses++;
+        }
+
+        countResponses = 0; // REMOVE THIS AFTER DEBUGGING
+        if (countResponses == commSize - 1)
+        {
+          // MPI_Recv(&steal_sizes[responder], 1, MPI_INT, responder, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          // printf("Proc[%d] got [%d] work from StolenProc[%d] counter=%d\n", MPIRank, steal_sizes[responder], responder, counter);
           for (int i = 0; i < commSize; i++)
-            printf("Proc[%d] steal_request[%d] = %d after responder\n", MPIRank, i, steal_request[i]);
+          {
+            if (i == MPIRank || steal_responses[i] == -1)
+            {
+              steal_responses[i] = 0;
+              continue;
+            }
+            int responseSize = steal_sizes[i];
+            // pushBackBulk(&pool_lloc, (steal_nodes + (i * capacity_per_proc)), responseSize);
+            steal_responses[i] = 0;
+          }
+          // steal_sizes[responder] = 0;
+          steal_request[MPIRank] = 0;
 
-          MPI_Recv((steal_nodes + (responder * capacity_per_proc)), steal_sizes[responder] * sizeof(Node), MPI_BYTE, responder, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          // printf("Proc[%d] steal_request[%d] = %d after responder counter=%d\n", MPIRank, i, steal_request[i], counter);
 
-          int counter = 0;
+          // This line below should be back
+          // MPI_Recv((steal_nodes + (responder * capacity_per_proc)), steal_sizes[responder] * sizeof(Node), MPI_BYTE, responder, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
           // time1 = omp_get_wtime();
 
           // while (steal_sizes[responder] == 0)
@@ -849,73 +849,53 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
           // sync_sizes += time2 - time1;
 
-          printf("After While: Proc[%d] got [%d] work from StolenProc[%d], counter = %d\n", MPIRank, steal_sizes[responder], responder, counter);
-          pushBackBulk(&pool_lloc, (steal_nodes + (responder * capacity_per_proc)), steal_sizes[responder]);
-          steal_sizes[responder] = 0;
-          steal_request[MPIRank] = -1;
-          for (int k = 0; k < commSize; k++)
-          {
-            if (k == MPIRank)
-              continue; // Skip self
-            // MPI_Win_lock(MPI_LOCK_EXCLUSIVE, k, 0, win_requests);
-            // MPI_Put(&steal_request[MPIRank], 1, MPI_INT, k, MPIRank, 1, MPI_INT, win_requests);
-            // // MPI_Win_flush(k, win_requests);
-            // MPI_Win_flush_all(win_requests);
-            // MPI_Win_sync(win_requests);
-            // MPI_Win_unlock(k, win_requests);
-
-            // MPI_Win_sync(win_requests);
-            //  MPI_Win_lock(MPI_LOCK_EXCLUSIVE, k, 0, win_sizes);
-            //  MPI_Put(&steal_sizes[responder], 1, MPI_INT, k, responder, 1, MPI_INT, win_sizes);
-            //  MPI_Win_flush(k, win_sizes);
-            //  MPI_Win_unlock(k, win_sizes);
-            //  MPI_Win_sync(win_sizes);
-            //  MPI_Win_sync(win_sizes);
-            //  MPI_Win_sync(win_requests);
-            //  MPI_Win_sync(win_nodes);
-          }
+          // printf("After While: Proc[%d] got [%d] work from StolenProc[%d], counter = %d\n", MPIRank, steal_sizes[responder], responder, counter);
+          //  pushBackBulk(&pool_lloc, (steal_nodes + (responder * capacity_per_proc)), steal_sizes[responder]);
         }
-        if (steal_request[MPIRank] == -1)
+        if (steal_request[MPIRank] == 0)
           break;
-        if (sum == commSize * (-2)) // Everybody has no more work
+        if (sum == commSize) // Everybody has no more work, then we should be over
         {
-          // In this implementation, if remoteSteal == false, then we are probably over
           remoteSteal = false;
           break;
         }
-        // else
-        //   break;
       }
 
       // Distributed Termination Condition
-      // This termination condition is not 'ideal' for distributed level
       if (remoteSteal == false)
       {
         printf("Proc[%d] Are we all done ?\n", MPIRank);
-        if (atomic_load(&localeState) == BUSY)
-          atomic_store(&localeState, IDLE);
+        MPI_Barrier(MPI_COMM_WORLD);
+        //  MPI_Win_fence(0, win_requests);
+        //  MPI_Win_fence(0, win_requests);
+        break;
 
-        bool *allLocaleStateTemp = (bool *)malloc(commSize * sizeof(bool));
-        _Atomic bool *allLocaleState = (_Atomic bool *)malloc(commSize * sizeof(_Atomic bool));
-        bool eachLocaleStateTemp = atomic_load(&localeState);
+        // Old termination condition
+        // This termination condition is not 'ideal' for distributed level
+        // if (atomic_load(&localeState) == BUSY)
+        //   atomic_store(&localeState, IDLE);
 
-        // Gather boolean states from all processes to all processes
-        MPI_Allgather(&eachLocaleStateTemp, 1, MPI_C_BOOL, allLocaleStateTemp, 1, MPI_C_BOOL, MPI_COMM_WORLD);
-        for (int i = 0; i < commSize; i++)
-          atomic_store(&allLocaleState[i], allLocaleStateTemp[i]);
+        // bool *allLocaleStateTemp = (bool *)malloc(commSize * sizeof(bool));
+        // _Atomic bool *allLocaleState = (_Atomic bool *)malloc(commSize * sizeof(_Atomic bool));
+        // bool eachLocaleStateTemp = atomic_load(&localeState);
 
-        // Check if eachLocalState of every process agrees for termination
-        if (allIdle(allLocaleState, commSize, &allLocalesIdleFlag))
-        {
-          free(allLocaleStateTemp);
-          free(allLocaleState);
-          // time2Idle = omp_get_wtime();
-          // IdleTime += time2Idle - time1Idle;
-          break;
-        }
-        // time2Idle = omp_get_wtime();
-        // IdleTime += time2Idle - time1Idle;
-        continue;
+        // // Gather boolean states from all processes to all processes
+        // MPI_Allgather(&eachLocaleStateTemp, 1, MPI_C_BOOL, allLocaleStateTemp, 1, MPI_C_BOOL, MPI_COMM_WORLD);
+        // for (int i = 0; i < commSize; i++)
+        //   atomic_store(&allLocaleState[i], allLocaleStateTemp[i]);
+
+        // // Check if eachLocalState of every process agrees for termination
+        // if (allIdle(allLocaleState, commSize, &allLocalesIdleFlag))
+        // {
+        //   free(allLocaleStateTemp);
+        //   free(allLocaleState);
+        //   // time2Idle = omp_get_wtime();
+        //   // IdleTime += time2Idle - time1Idle;
+        //   break;
+        // }
+        // // time2Idle = omp_get_wtime();
+        // // IdleTime += time2Idle - time1Idle;
+        // continue;
       }
       else
       {
@@ -924,7 +904,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
         continue;
       }
     }
-  }
+  } // End of GPU-accelerated bounding / Work-Stealing
 
   for (int i = 0; i < commSize; i++)
     printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
