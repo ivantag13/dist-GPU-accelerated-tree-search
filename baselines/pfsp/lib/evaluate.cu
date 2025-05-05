@@ -1,44 +1,75 @@
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 #include <stdlib.h>
 #include "evaluate.h"
 #include "c_bounds_gpu.cu"
 
-  __device__ void swap_cuda(int* a, int* b)
+  __device__ void swap_cuda(int *a, int *b)
   {
     int tmp = *b;
     *b = *a;
     *a = tmp;
   }
 
-  void printDims(dim3 gridDim, dim3 blockDim) {
+  void printDims(dim3 gridDim, dim3 blockDim)
+  {
     printf("Grid Dimensions : [%d, %d, %d] blocks. \n",
-      gridDim.x, gridDim.y, gridDim.z);
+           gridDim.x, gridDim.y, gridDim.z);
 
     printf("Block Dimensions : [%d, %d, %d] threads.\n",
-      blockDim.x, blockDim.y, blockDim.z);
+           blockDim.x, blockDim.y, blockDim.z);
   }
 
   // Evaluate a bulk of parent nodes on GPU using lb1
-  __global__ void evaluate_gpu_lb1(const int jobs, const int size, Node* parents_d, const lb1_bound_data  lbound1_d, int* bounds)
+  __global__ void evaluate_gpu_lb1(const int jobs, const int size, Node *parents_d, const int parentsSize, const lb1_bound_data lbound1_d, int *bounds, int *offSets_d, int *sumOffSets_d)
   {
     int threadId = blockIdx.x * blockDim.x + threadIdx.x;
+    int index;
+    int i = 0;
+    int sizeVector = parentsSize;
+    int threadOffSet;
 
-    if (threadId < size) {
-      const int parentId = threadId / jobs;
-      const int k = threadId % jobs;
-      Node parent =  parents_d[parentId];
+    if (threadId < sumOffSets_d[i])
+    {
+      index = i;
+    }
+    else
+    {
+      while (i < sizeVector - 1)
+      {
+        if (threadId >= sumOffSets_d[i] || threadId < sumOffSets_d[i + 1])
+        {
+          index = i + 1;
+          break;
+        }
+        i++;
+      }
+    }
+    threadOffSet = offSets_d[index];
+    if(threadId >= size || index >= sizeVector)
+      printf("Error : bad index for sizes threadId[%d], size[%d], index[%d], sizeVector[%d]\n", threadId, size, index, sizeVector);
+
+    if (threadId < size)
+    {
+      // All thread indexation is done in these two next lines
+      const int parentId = index;
+      Node parent = parents_d[parentId];
       int depth = parent.depth;
       int limit1 = parent.limit1;
+      const int k = (threadId - sumOffSets_d[index]) + depth; // threadId-sumOffSets_d[index] should vary from 0 to offSets_d[index]
 
+      if (k < limit1 + 1 || k >= jobs)
+        printf("Thread[%d] Something wrong", threadId);
       // We evaluate all permutations by varying index k from limit1 forward
-      if (k >= limit1+1) {
-        swap_cuda(&parent.prmu[depth],&parent.prmu[k]);
-        lb1_bound_gpu(lbound1_d, parent.prmu, limit1+1, jobs, &bounds[threadId]);
-        swap_cuda(&parent.prmu[depth],&parent.prmu[k]);
-      }
+      // if (k >= limit1 + 1)
+      //{
+      swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
+      lb1_bound_gpu(lbound1_d, parent.prmu, limit1 + 1, jobs, &bounds[threadId]);
+      swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
+      //}
     }
   }
 
@@ -48,11 +79,12 @@ extern "C" {
     to the other lower bounds.
   */
   // Evaluate a bulk of parent nodes on GPU using lb1_d.
-  __global__ void evaluate_gpu_lb1_d(const int jobs, const int size, Node* parents_d, const lb1_bound_data lbound1_d, int* bounds)
+  __global__ void evaluate_gpu_lb1_d(const int jobs, const int size, Node *parents_d, const lb1_bound_data lbound1_d, int *bounds)
   {
     int parentId = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if(parentId < size){
+    if (parentId < size)
+    {
       Node parent = parents_d[parentId];
 
       // Vector of integers of size MAX_JOBS
@@ -60,50 +92,55 @@ extern "C" {
 
       lb1_children_bounds_gpu(lbound1_d, parent.prmu, parent.limit1, jobs, lb_begin);
 
-      for(int k = 0; k < jobs; k++) {
-        if (k >= parent.limit1+1) {
+      for (int k = 0; k < jobs; k++)
+      {
+        if (k >= parent.limit1 + 1)
+        {
           const int job = parent.prmu[k];
-          bounds[parentId*jobs+k] = lb_begin[job];
+          bounds[parentId * jobs + k] = lb_begin[job];
         }
       }
     }
   }
 
   // Evaluate a bulk of parent nodes on GPU using lb2.
-  __global__ void evaluate_gpu_lb2(const int jobs, const int size, int best, Node* parents_d, const lb1_bound_data lbound1_d, const lb2_bound_data lbound2_d, int* bounds)
+  __global__ void evaluate_gpu_lb2(const int jobs, const int size, int best, Node *parents_d, const lb1_bound_data lbound1_d, const lb2_bound_data lbound2_d, int *bounds)
   {
     int threadId = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (threadId < size) {
+    if (threadId < size)
+    {
       const int parentId = threadId / jobs;
       const int k = threadId % jobs;
-      Node parent =  parents_d[parentId];
+      Node parent = parents_d[parentId];
       int depth = parent.depth;
       int limit1 = parent.limit1;
 
       // We evaluate all permutations by varying index k from limit1 forward
-      if (k >= limit1+1) {
-        swap_cuda(&parent.prmu[depth],&parent.prmu[k]);
-        lb2_bound_gpu(lbound1_d, lbound2_d, parent.prmu, limit1+1, jobs, best, &bounds[threadId]);
-        swap_cuda(&parent.prmu[depth],&parent.prmu[k]);
+      if (k >= limit1 + 1)
+      {
+        swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
+        lb2_bound_gpu(lbound1_d, lbound2_d, parent.prmu, limit1 + 1, jobs, best, &bounds[threadId]);
+        swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
       }
     }
   }
 
-  void evaluate_gpu(const int jobs, const int lb, const int size, const int nbBlocks,
-    int* best, const lb1_bound_data lbound1, const lb2_bound_data lbound2, Node* parents, int* bounds)
+  void evaluate_gpu(const int jobs, const int lb, const int size, const int nbBlocks, const int parentsSize,
+                    int *best, const lb1_bound_data lbound1, const lb2_bound_data lbound2, Node *parents, int *bounds, int *offSets_d, int *sumOffSets_d)
   {
     // 1D grid of 1D nbBlocks(_lb1_d) blocks with block size BLOCK_SIZE
     int nbBlocks_lb1_d;
-    switch (lb) {
+    switch (lb)
+    {
     case 0: // lb1_d
-      nbBlocks_lb1_d = ceil((double)nbBlocks/jobs);
+      nbBlocks_lb1_d = ceil((double)nbBlocks / jobs);
       evaluate_gpu_lb1_d<<<nbBlocks_lb1_d, BLOCK_SIZE>>>(jobs, size, parents, lbound1, bounds);
       return;
       break;
 
     case 1: // lb1
-      evaluate_gpu_lb1<<<nbBlocks, BLOCK_SIZE>>>(jobs, size, parents, lbound1, bounds);
+      evaluate_gpu_lb1<<<nbBlocks, BLOCK_SIZE>>>(jobs, size, parents, parentsSize, lbound1, bounds, offSets_d, sumOffSets_d);
       return;
       break;
 
