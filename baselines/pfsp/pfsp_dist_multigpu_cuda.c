@@ -510,36 +510,44 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   // TODO: Implement OpenMP reduction to variables best_l, eachExploredTree, eachExploredSol
   // int best_l = *best;
+  int global_termination_flag = 0;
+  int poolSizes_all[D];
 
-#pragma omp parallel for num_threads(D) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, pool_lloc, multiPool, lbound1, lbound2) // reduction(min:best_l)
-  for (int gpuID = 0; gpuID < D; gpuID++)
+#pragma omp parallel num_threads(D + 1) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, pool_lloc, multiPool, lbound1, lbound2) // reduction(min:best_l)
+  // for (int gpuID = 0; gpuID < D; gpuID++)
   {
-    cudaSetDevice(gpuID);
+    int gpuID = omp_get_thread_num();
+    // printf("From Proc[%d] Thread[%d] Started MPI+Threading\n", MPIRank, gpuID);
+    if (gpuID != D)
+      cudaSetDevice(gpuID);
 
     int nSteal = 0, nSSteal = 0;
 
     unsigned long long int tree = 0, sol = 0;
     SinglePool_ext *pool_loc;
-    pool_loc = &multiPool[gpuID];
+    if (gpuID != D)
+      pool_loc = &multiPool[gpuID];
     int best_l = *best;
     bool taskState = BUSY;
     bool expected = false;
 
-    // each task gets its chunk
-    for (int i = 0; i < c_l; i++)
+    if (gpuID != D)
     {
-      pool_loc->elements[i] = pool_lloc.elements[gpuID + f_l + i * D];
-    }
-    pool_loc->size += c_l;
-    if (gpuID == D - 1)
-    {
-      for (int i = c_l; i < l_l; i++)
+      // each task gets its chunk
+      for (int i = 0; i < c_l; i++)
       {
-        pool_loc->elements[i] = pool_lloc.elements[(D * c_l) + f_l + i - c_l];
+        pool_loc->elements[i] = pool_lloc.elements[gpuID + f_l + i * D];
       }
-      pool_loc->size += l_l - c_l;
+      pool_loc->size += c_l;
+      if (gpuID == D - 1)
+      {
+        for (int i = c_l; i < l_l; i++)
+        {
+          pool_loc->elements[i] = pool_lloc.elements[(D * c_l) + f_l + i - c_l];
+        }
+        pool_loc->size += l_l - c_l;
+      }
     }
-
     // TODO: add function 'copyBoundsDevice' to perform the deep copy of bounding data
     // Vectors for deep copy of lbound1 to device
     lb1_bound_data lbound1_d;
@@ -612,133 +620,310 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int *bounds_d;
     cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
+#pragma omp barrier
+
+    int termination_flag = 1;
+    int global_flags[commSize];
+    int counter = 0;
+    // printf("From Proc[%d] Thread[%d] Before While Loop\n", MPIRank, gpuID);
+
     while (1)
     {
-      /*
-        Each task gets its parenst nodes from the pool
-      */
-      int poolSize = popBackBulk(pool_loc, m, M, parents);
-
-      if (poolSize > 0)
+      counter++;
+      if (global_termination_flag)
       {
-        if (taskState == IDLE)
-        {
-          taskState = BUSY;
-          atomic_store(&eachTaskState[gpuID], BUSY);
-        }
-
-        int sum = 0;
-        int diff;
-        int i, j;
-        for (i = 0; i < poolSize; i++)
-        {
-          diff = jobs - parents[i].depth;
-          for (j = 0; j < diff; j++)
-            nodeIndex[j + sum] = i;
-          sum += diff;
-          sumOffSets[i] = sum;
-        }
-
-        const int numBounds = sum;
-        const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
-
-        cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
-        cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
-        // numBounds is the 'size' of the problem
-        evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
-        // evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
-
-        cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
-
-        /*
-          Each task generates and inserts its children nodes to the pool.
-        */
-        generate_children(parents, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc);
+        // printf("From Proc[%d] Thread[%d] Global Termination Reached\n", MPIRank, gpuID);
+        break;
       }
-      else
+      // Work Sharing by Last Thread
+      if (gpuID == D)
       {
-        // local work stealing
-        int tries = 0;
-        bool steal = false;
-        int victims[D];
-        permute(victims, D);
+        // Termination Detection of GPU-accelerated step
+        termination_flag = 0;
 
-        while (tries < D && steal == false)
-        { // WS0 loop
-          const int victimID = victims[tries];
+        // Check multiPool sizes
+        for (int i = 0; i < D; i++)
+        {
+          if (multiPool[i].size > m || poolSizes_all[i] > 0)
+            termination_flag = 1;
+        }
 
-          if (victimID != gpuID)
-          { // if not me
-            SinglePool_ext *victim;
-            victim = &multiPool[victimID];
-            nSteal++;
-            int nn = 0;
-            int count = 0;
-            while (nn < 10)
-            { // WS1 loop
-              expected = false;
-              count++;
-              if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
-              { // get the lock
-                int size = victim->size;
-                int nodeSize = 0;
+        MPI_Allgather(&termination_flag, 1, MPI_INT, global_flags, 1, MPI_INT, MPI_COMM_WORLD);
 
-                if (size >= 2 * m)
+        int termination = 0;
+        for (int i = 0; i < commSize; i++)
+          termination += global_flags[i];
+
+        if (termination == 0) // || allTasksIdleFlag == true) // not only termination has to be checked, but also the poolSizes of other threads
+          global_termination_flag = 1;
+
+        // If no Termination, we proceed to work sharing/work stealing (all is done within this if condition)
+        if (!global_termination_flag)
+        {
+
+          // Step 1: Check if any process needs work (below threshold)
+          int threshold = commSize * 2 * m * D;
+          int needs_work = 1;
+          for (int i = 0; i < D; i++)
+          {
+            if (multiPool[i].size > threshold)
+              needs_work = 0;
+          }
+          int all_needs_work[commSize];
+
+          // Exchange work needs information
+          MPI_Allgather(&needs_work, 1, MPI_INT, all_needs_work, 1, MPI_INT, MPI_COMM_WORLD);
+
+          // Count how many processes need work
+          int needy_count = 0;
+          for (int i = 0; i < commSize; i++)
+          {
+            if (all_needs_work[i])
+              needy_count++;
+          }
+
+          // Step 2: Determine how much to share (if this process has work)
+          Node *sharedNodes = NULL; // = (Node *)malloc(sizeof(Node));
+          int sharedSize = 0;
+          int halfSizes;
+          // Only proceed if some (but not all) processes need work
+          if (needy_count > 0 && needy_count < commSize)
+          {
+            if (!needs_work)
+            {
+              for (int j = 0; j < D; j++)
+              {
+                Node *sharedNodesPartial;
+                sharedNodesPartial = popBackBulkHalf(&multiPool[j], m, M, &halfSizes);
+                // sharedSize += halfSizes;
+                if (halfSizes > 0)
                 {
-                  Node *p = popBackBulkFree(victim, m, M, &nodeSize);
-
-                  if (nodeSize == 0)
-                  {                                       // safety check
-                    atomic_store(&(victim->lock), false); // reset lock
-                    printf("\nDEADCODE\n");
-                    exit(-1);
-                  }
-
-                  /* for i in 0..#(size/2) {
-                    pool_loc.pushBack(p[i]);
-                  } */
-
-                  pushBackBulk(pool_loc, p, nodeSize);
-
-                  steal = true;
-                  nSSteal++;
-                  atomic_store(&(victim->lock), false); // reset lock
-                  goto WS0;                             // Break out of WS0 loop
+                  if (sharedNodes == NULL)
+                    sharedNodes = (Node *)malloc(halfSizes * sizeof(Node));
+                  else
+                    sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
+                  // Optimization
+                  // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
+                  for (int k = 0; k < halfSizes; k++)
+                    sharedNodes[sharedSize + k] = sharedNodesPartial[k];
+                  sharedSize += halfSizes;
+                  free(sharedNodesPartial);
                 }
-
-                atomic_store(&(victim->lock), false); // reset lock
-                break;                                // Break out of WS1 loop
               }
-
-              nn++;
             }
           }
 
-          tries++;
-        }
+          // Step 3: Gather the sizes of the shared data from all processes
+          int sendCounts[commSize];
+          int recvCounts[commSize];
+          int recvDispls[commSize];
 
-      WS0:
-        if (steal == false)
+          // Each process sends its sharedSize to all other processes
+          MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
+
+          // Step 4: Calculate displacements for the received data
+          int totalReceived = 0;
+          for (int i = 0; i < commSize; i++)
+          {
+            recvCounts[i] = sendCounts[i];
+            recvDispls[i] = totalReceived;
+            totalReceived += recvCounts[i];
+          }
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
+
+          // Step 5: Allocate a buffer to store all received shared data
+          Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
+          if (receivedNodes == NULL)
+          {
+            fprintf(stderr, "Proc[%d] Thread[%d] Memory allocation failed for receivedNodes\n", MPIRank, gpuID);
+            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+          }
+
+          // Step 6: Gather all shared data into the receivedNodes buffer
+          MPI_Allgatherv(sharedNodes, sharedSize, myNode,
+                         receivedNodes, recvCounts, recvDispls, myNode,
+                         MPI_COMM_WORLD);
+
+          // Step 6: Redistribute nodes (only for processes that need work)
+          if (needs_work && totalReceived > 0)
+          {
+            int nodesPerProcess = totalReceived / needy_count; // Number of nodes each process will recover from every other process
+            int remainder = totalReceived % needy_count;       // Remainder to handle uneven distribution
+
+            // Nodes process per each process
+            Node *insertNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
+
+            int added = 0;
+            // Calculate our position in the list of needy processes
+            int needy_position = 0;
+            for (int i = 0; i < MPIRank; i++)
+            {
+              if (all_needs_work[i])
+                needy_position++;
+            }
+
+            for (int k = 0; k < nodesPerProcess; k++)
+            {
+              insertNodes[k] = receivedNodes[k * needy_count + needy_position];
+              added++;
+            }
+            // Remainder per each process (if any)
+            if (remainder > 0 && needy_position < remainder)
+            {
+              insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * needy_count + needy_position];
+              added++;
+            }
+
+            // if (counter % 100 == 0)
+            //   printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
+
+            pushBackBulk(&multiPool[0], insertNodes, added);
+            free(insertNodes);
+          }
+
+          // Free allocated memory
+          free(sharedNodes);
+          free(receivedNodes);
+        }
+      }
+
+      if (gpuID != D)
+      {
+        /*
+          Each task gets its parenst nodes from the pool
+        */
+        // counter++;
+        int poolSize = popBackBulk(pool_loc, m, M, parents);
+        poolSizes_all[gpuID] = poolSize;
+
+        if (poolSize > 0)
         {
-          // termination
-          if (taskState == BUSY)
+          if (taskState == IDLE)
           {
-            taskState = IDLE;
-            atomic_store(&eachTaskState[gpuID], IDLE);
+            taskState = BUSY;
+            atomic_store(&eachTaskState[gpuID], BUSY);
           }
-          if (allIdle(eachTaskState, D, &allTasksIdleFlag))
+
+          int sum = 0;
+          int diff;
+          int i, j;
+          for (i = 0; i < poolSize; i++)
           {
-            break;
+            diff = jobs - parents[i].depth;
+            for (j = 0; j < diff; j++)
+              nodeIndex[j + sum] = i;
+            sum += diff;
+            sumOffSets[i] = sum;
           }
-          continue;
+
+          const int numBounds = sum;
+          const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
+          // printf("Proc[%d] Thread[%d] Before cudaMemcpy poolSize = %d counter = %d\n", MPIRank, gpuID, poolSize, counter);
+          cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
+          // printf("Proc[%d] Thread[%d] after cudaMemcpy, counter = %d\n", MPIRank, gpuID, counter);
+          cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
+          cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
+          // numBounds is the 'size' of the problem
+          evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
+          // evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
+  
+          cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
+
+          /*
+            Each task generates and inserts its children nodes to the pool.
+          */
+          generate_children(parents, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc);
         }
         else
         {
-          continue;
+          // local work stealing
+          int tries = 0;
+          bool steal = false;
+          int victims[D];
+          permute(victims, D);
+
+          while (tries < D && steal == false)
+          { // WS0 loop
+            const int victimID = victims[tries];
+
+            if (victimID != gpuID)
+            { // if not me
+              SinglePool_ext *victim;
+              victim = &multiPool[victimID];
+              nSteal++;
+              int nn = 0;
+              int count = 0;
+              while (nn < 10)
+              { // WS1 loop
+                expected = false;
+                count++;
+                if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
+                { // get the lock
+                  int size = victim->size;
+                  int nodeSize = 0;
+
+                  if (size >= 2 * m)
+                  {
+                    Node *p = popBackBulkFree(victim, m, M, &nodeSize);
+
+                    if (nodeSize == 0)
+                    {                                       // safety check
+                      atomic_store(&(victim->lock), false); // reset lock
+                      printf("\nDEADCODE\n");
+                      exit(-1);
+                    }
+
+                    /* for i in 0..#(size/2) {
+                      pool_loc.pushBack(p[i]);
+                    } */
+
+                    pushBackBulk(pool_loc, p, nodeSize);
+
+                    steal = true;
+                    nSSteal++;
+                    atomic_store(&(victim->lock), false); // reset lock
+                    goto WS0;                             // Break out of WS0 loop
+                  }
+
+                  atomic_store(&(victim->lock), false); // reset lock
+                  break;                                // Break out of WS1 loop
+                }
+
+                nn++;
+              }
+            }
+
+            tries++;
+          }
+
+        WS0:
+          if (steal == false)
+          {
+            // termination
+            if (taskState == BUSY)
+            {
+              taskState = IDLE;
+              atomic_store(&eachTaskState[gpuID], IDLE);
+            }
+            if (allIdle(eachTaskState, D, &allTasksIdleFlag))
+            {
+              continue;
+              // break;
+            }
+            continue;
+          }
+          else
+          {
+            continue;
+          }
         }
       }
     }
+
+#pragma omp barrier
 
     // OpenMP environment freeing variables
     cudaFree(parents_d);
@@ -754,26 +939,36 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     free(parents);
     free(bounds);
 
+    // printf("From Proc[%d] Thread[%d] OMP Critical reached\n", MPIRank, gpuID);
+
 #pragma omp critical
     {
-      const int poolLocSize = pool_loc->size;
-      for (int i = 0; i < poolLocSize; i++)
+      if (gpuID != D)
       {
-        int hasWork = 0;
+        const int poolLocSize = pool_loc->size;
+        for (int i = 0; i < poolLocSize; i++)
+        {
+          int hasWork = 0;
 
-        pushBack(&pool_lloc, popBack(pool_loc, &hasWork));
-        if (!hasWork)
-          break;
+          pushBack(&pool_lloc, popBack(pool_loc, &hasWork));
+          if (!hasWork)
+            break;
+        }
       }
     }
+    if (gpuID != D)
+    {
+      eachExploredTree[gpuID] = tree;
+      eachExploredSol[gpuID] = sol;
+      eachBest[gpuID] = best_l;
 
-    eachExploredTree[gpuID] = tree;
-    eachExploredSol[gpuID] = sol;
-    eachBest[gpuID] = best_l;
-
-    deleteSinglePool_ext(pool_loc);
+      deleteSinglePool_ext(pool_loc);
+    }
 
   } // End of parallel region OpenMP
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  // printf("From Proc[%d] Left OMP region\n", MPIRank);
 
   /*******************************
   Gathering statistics
@@ -888,6 +1083,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       pushBack(&pool, masterNodes[i]);
   }
 
+  // printf("From Proc[%d] Before Step 3\n", MPIRank);
+
   /*
     Step 3: We complete the depth-first search on CPU.
   */
@@ -905,6 +1102,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       count++;
     }
   }
+
+  // printf("After Proc[%d] Before Step 3\n", MPIRank);
 
   // freeing memory for structs common to all MPI processes
   deleteSinglePool_ext(&pool);
@@ -926,7 +1125,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     printf("Number of explored solutions: %llu\n", *exploredSol);
     printf("Elapsed time: %f [s]\n", t3);
 
-    printf("\nExploration terminated.\n");
+    printf("\nProc[%d] Exploration terminated.\n", MPIRank);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
@@ -935,9 +1134,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
 int main(int argc, char *argv[])
 {
-  MPI_Init(&argc, &argv);
+  int provided, MPIRank, commSize;
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &provided);
+  if (provided != MPI_THREAD_SERIALIZED)
+  {
+    printf("MPI does not support multiple threads.\n");
+    MPI_Finalize();
+    return -1;
+  }
 
-  int MPIRank, commSize;
   MPI_Comm_rank(MPI_COMM_WORLD, &MPIRank);
   MPI_Comm_size(MPI_COMM_WORLD, &commSize);
 
