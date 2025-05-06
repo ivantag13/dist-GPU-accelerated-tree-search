@@ -10,7 +10,7 @@ extern "C" {
 #include "c_bound_johnson.h" // For structs definitions
 
 void evaluate_gpu(const int jobs, const int lb, const int size, const int nbBlocks, const int parentsSize,
-	int* best, const lb1_bound_data lbound1, const lb2_bound_data lbound2, Node* parents, int* bounds, int* offSets_d, int* sumOffSets_d);
+	int* best, const lb1_bound_data lbound1, const lb2_bound_data lbound2, Node* parents, int* bounds, int* sumOffSets_d, int* nodeIndex_d);
 
 #ifdef __cplusplus
 }

@@ -317,14 +317,16 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 void generate_children(Node *parents, const int size, const int jobs, int *bounds,
                        unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool *pool)
 {
+  int sum = 0;
   for (int i = 0; i < size; i++)
   {
     Node parent = parents[i];
     const uint8_t depth = parent.depth;
+    const int limit1 = parent.limit1;
 
-    for (int j = parent.limit1 + 1; j < jobs; j++)
+    for (int j = limit1 + 1; j < jobs; j++)
     {
-      const int lowerbound = bounds[j + i * jobs];
+      const int lowerbound = bounds[(j - (limit1 + 1)) + sum];
 
       // If child leaf
       if (depth + 1 == jobs)
@@ -350,6 +352,7 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
         }
       }
     }
+    sum += jobs - depth;
   }
 }
 
@@ -474,19 +477,20 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   Node *parents_d;
   cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
-  int *offSets = (int *)malloc(M * sizeof(int));
-  int *offSets_d;
-  cudaMalloc((void **)&offSets_d, M * sizeof(int));
-
   int *sumOffSets = (int *)malloc(M * sizeof(int));
   int *sumOffSets_d;
   cudaMalloc((void **)&sumOffSets_d, M * sizeof(int));
 
   // Allocating bounds vector on CPU and GPU
+  int *nodeIndex = (int *)malloc((jobs * M) * sizeof(int));
+  int *nodeIndex_d;
+  cudaMalloc((void **)&nodeIndex_d, (jobs * M) * sizeof(int));
+
   int *bounds = (int *)malloc((jobs * M) * sizeof(int));
-  int *boundsGenChildren = (int *)malloc((jobs * M) * sizeof(int));
   int *bounds_d;
   cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
+
+  int counter = 0;
 
   while (1)
   {
@@ -495,72 +499,41 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
     if (poolSize > 0)
     {
-      // poolSize = MIN(poolSize, M);
-
-      // for (int i = 0; i < poolSize; i++)
-      // {
-      //   int hasWork = 0;
-      //   parents[i] = popBack(&pool, &hasWork);
-      //   if (!hasWork)
-      //     break;
-      // }
-
-      /*
-        TODO: Optimize 'numBounds' based on the fact that the maximum number of
-        generated children for a parent is 'parent.limit2 - parent.limit1 + 1' or
-        something like that.
-      */
+      // qsort(parents, poolSize, sizeof(Node), compare_nodes);
 
       int sum = 0;
-      for (int index = 0; index < poolSize; index++)
+      int diff;
+      int i, j;
+      for (i = 0; i < poolSize; i++)
       {
-        offSets[index] = (jobs - 1) - parents[index].depth; // This can never be zero
-        if (offSets[index] == 0)
-          printf("Solution node in wrong place\n");
-        sum += offSets[index];
-        sumOffSets[index] = sum;
+        diff = jobs - parents[i].depth;
+        for (j = 0; j < diff; j++)
+          nodeIndex[j + sum] = i;
+        sum += diff;
+        sumOffSets[i] = sum;
       }
-
-      printf("numBounds[%d] jobs*poolSize = %d \n", sum, jobs * poolSize);
+      // if (counter == 0)
+      // {
+      //   for (i = 0; i < sum; i++)
+      //     printf("nodeIndex[%d] = %d\n", i, nodeIndex[i]);
+      // }
 
       const int numBounds = sum;
       const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
 
-      // Before cudaMemcpy(parents_d, ...)
-      // qsort(parents, poolSize, sizeof(Node), compare_nodes);
-
       cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
-      cudaMemcpy(offSets_d, offSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
-      cudaMemcpy(sumOffSets_d, parents, poolSize * sizeof(int), cudaMemcpyHostToDevice);
-
+      cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
+      cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
       // numBounds is the 'size' of the problem
-      evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, offSets_d, sumOffSets_d);
+      evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
       cudaDeviceSynchronize();
-
       cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
-
-      // Reorganize bounds vector in an 'acceptable format' to generate_children function
-      int indexBounds = 0;
-      for (int k = 0; k < poolSize; k++)
-      {
-        int depth = parents[k].depth;
-        int limit11 = parents[k].limit1 + 1;
-        for (int n = 0; n < jobs; n++)
-        {
-          if (n >= limit11)
-          {
-            boundsGenChildren[n + k * jobs] = bounds[indexBounds];
-            indexBounds++;
-          }
-        }
-      }
-      if (indexBounds >= numBounds)
-        printf("Error : indexBounds[%d] is out of bounds\n", indexBounds);
 
       /*
         each task generates and inserts its children nodes to the pool.
       */
-      generate_children(parents, poolSize, jobs, boundsGenChildren, exploredTree, exploredSol, best, &pool);
+      generate_children(parents, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool);
+      counter++;
     }
     else
     {
@@ -570,7 +543,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
 
-  printf("\nSearch on GPU completed\n");
+  printf("\nSearch on GPU completed pool.capacity = %d\n", pool.capacity);
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
