@@ -699,8 +699,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
           // Each process sends its sharedSize to all other processes
           MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
-          if (counter % 100 == 0)
-            printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
 
           // Step 4: Calculate displacements for the received data
           int totalReceived = 0;
@@ -710,8 +710,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             recvDispls[i] = totalReceived;
             totalReceived += recvCounts[i];
           }
-          if (counter % 100 == 0)
-            printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
 
           // Step 5: Allocate a buffer to store all received shared data
           Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
@@ -746,8 +746,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             added++;
           }
 
-          if (counter % 100 == 0)
-            printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
 
           pushBackBulk(&multiPool[0], insertNodes, added);
 
