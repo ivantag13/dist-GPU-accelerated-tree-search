@@ -194,7 +194,7 @@ void print_results(const int optimum, const unsigned long long int exploredTree,
 
 void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, int ws, const int optimum,
                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
-                        unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *nStealsGPU, unsigned long long int *nSStealsGPU,
+                        unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *nStealsGPU, unsigned long long int *nSStealsGPU, unsigned long long int *nTerminationGPU,
                         double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination)
 {
   FILE *file;
@@ -231,6 +231,14 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
       fprintf(file, "%llu ", nSStealsGPU[i]);
     else
       fprintf(file, "%llu\n", nSStealsGPU[i]);
+  }
+  fprintf(file, "Termination Checks per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", nTerminationGPU[i]);
+    else
+      fprintf(file, "%llu\n", nTerminationGPU[i]);
   }
   fprintf(file, "Time cudaMemcpy per GPU: ");
   for (int i = 0; i < D; i++)
@@ -457,7 +465,7 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
 // Multi-GPU PFSP search
 void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const double perc, int ws, int *best, unsigned long long int *exploredTree,
                  unsigned long long int *exploredSol, double *elapsedTime, unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *nStealsGPU,
-                 unsigned long long int *nSStealsGPU, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination)
+                 unsigned long long int *nSStealsGPU, unsigned long long int *nTerminationGPU, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination)
 {
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
@@ -773,6 +781,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           {
             startTermination = omp_get_wtime();
             // termination
+            nTerminationGPU[gpuID]++;
             if (taskState == BUSY)
             {
               taskState = IDLE;
@@ -900,7 +909,7 @@ int main(int argc, char *argv[])
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
   unsigned long long int exploredTree = 0;
   unsigned long long int exploredSol = 0;
-  unsigned long long int expTreeGPU[D], expSolGPU[D], nStealsGPU[D], nSStealsGPU[D];
+  unsigned long long int expTreeGPU[D], expSolGPU[D], nStealsGPU[D], nSStealsGPU[D], nTerminationGPU[D];
 
   double elapsedTime;
   double timeCudaMemCpy[D], timeCudaMalloc[D], timeKernelCall[D], timeIdle[D], timeTermination[D];
@@ -912,15 +921,16 @@ int main(int argc, char *argv[])
     timeKernelCall[i] = 0;
     timeIdle[i] = 0;
     timeTermination[i] = 0;
+    nTerminationGPU[i] = 0;
   }
 
   pfsp_search(inst, lb, m, M, D, perc, ws, &optimum, &exploredTree, &exploredSol, &elapsedTime,
-              expTreeGPU, expSolGPU, nStealsGPU, nSStealsGPU, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeIdle, timeTermination);
+              expTreeGPU, expSolGPU, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeIdle, timeTermination);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
   print_results_file(inst, machines, jobs, lb, D, ws, optimum, exploredTree, exploredSol, elapsedTime,
-                     expTreeGPU, expSolGPU, nStealsGPU, nSStealsGPU, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeIdle, timeTermination);
+                     expTreeGPU, expSolGPU, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeIdle, timeTermination);
 
   return 0;
 }
