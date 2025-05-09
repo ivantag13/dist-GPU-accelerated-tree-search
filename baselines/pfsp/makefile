@@ -28,7 +28,6 @@ endif
 
 C_COMMON_OPTS    := -O3 -Wall -g
 CUDA_COMMON_OPTS := -O3 -arch=sm_80 # TODO: adapt SM automatically, if possible
-HIP_COMMON_OPTS  := $(C_COMMON_OPTS) --offload-arch=$(AMD_GPU_ARCH)
 
 LIBPATH := lib
 
