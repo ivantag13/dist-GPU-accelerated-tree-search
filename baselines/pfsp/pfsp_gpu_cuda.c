@@ -33,7 +33,7 @@ int compare_nodes(const void *a, const void *b)
 }
 
 /******************************************************************************
-CUDA error checking
+CUDA functions
 ******************************************************************************/
 
 #define gpuErrchk(ans)                          \
@@ -48,6 +48,64 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
     if (abort)
       exit(code);
   }
+}
+
+// Number of machine‑pairs as a function of M
+//   P = M*(M‑1)/2
+static inline int P_of(int M)
+{
+  return (int)M * (M - 1) / 2;
+}
+
+// FLOP count per single lb1 bound invocation,
+// as a function of N (jobs), M (machines), and lim (limit1):
+static inline int flop_lb1(int N, int M, int lim)
+{
+  // 1) schedule_front: (lim+1) * [1 add + 2*(M‑1) ops]
+  int F_front = (int)(lim) * (1 + 2 * (M - 1));
+  // 2) sum_unscheduled: (N‑(lim+1)) * M adds
+  int F_remain = (int)(N - (lim)) * M;
+  // 3) machine_bound_from_parts: 2 + 4*(M‑1)
+  int F_bind = 2 + 4 * (M - 1);
+  return F_front + F_remain + F_bind;
+}
+
+// Bytes per single lb1‑bound invocation:
+//  - loads  = N*M ints  (schedule_front + sum_unscheduled)
+//  - stores = 1 int      (write one bounds entry)
+//  - total bytes = 4 bytes/Int * (loads + stores)
+static inline int bytes_per_inv_lb1(int N, int M)
+{
+  int loads = (int)N * M;
+  int stores = 1;
+  return 4 * (loads + stores);
+}
+
+// FLOP count per single lb2 bound invocation:
+//   same front/remain cost as lb1, plus the lb_makespan loop over P pairs
+static inline int flop_lb2(int N, int M, int lim)
+{
+  int F_front = (int)(lim) * (1 + 2 * (M - 1));
+  int F_remain = (int)(N - (lim)) * M;
+  int P = P_of(M);
+  // For each pair: 4 ops per unscheduled job + 4 final ops
+  int unsched = (int)(N - (lim));
+  int F_pair = 4 * unsched + 4;
+  int F_makesp = P * F_pair;
+  return F_front + F_remain + F_makesp;
+}
+
+// Bytes per single lb2‑bound invocation:
+//  - loads  = N*M                           (front + remain)
+//           + 3 * P * (N - lim - 1)         (2 p_times + 1 lag per unscheduled job per pair)
+//  - stores = 1
+static inline int bytes_per_inv_lb2(int N, int M, int lim)
+{
+  int P = P_of(M);
+  int uns = (int)N - lim;
+  int loads = (int)N * M + 3 * P * uns;
+  int stores = 1;
+  return 4 * (loads + stores);
 }
 
 /*******************************************************************************
@@ -357,9 +415,20 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
 }
 
 // Single-GPU PFSP search
-void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree, 
-  unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
+void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
+                 unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
 {
+
+  struct cudaDeviceProp prop;
+  int dev = 0;
+  cudaGetDevice(&dev);
+  cudaGetDeviceProperties(&prop, dev);
+  printf("Device name:          %s\n", prop.name);
+  printf("SM count:             %d\n", prop.multiProcessorCount);
+  // printf("CUDA cores/SM (est):  %d\n", e.g. 64);
+  printf("Clock rate (kHz):     %d\n", prop.clockRate);
+  // printf("Memory bandwidth (GB/s): ~%.1f\n",look up or use prop.memoryClockRate & busWidth );
+
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
@@ -497,6 +566,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   *timeCudaMalloc = (endCudaMalloc.tv_sec - startCudaMalloc.tv_sec) + (endCudaMalloc.tv_nsec - startCudaMalloc.tv_nsec) / 1e9;
 
   int counter = 0;
+  int totalFlops = 0;
+  int totalBytes = 0;
 
   while (1)
   {
@@ -511,13 +582,23 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       int sum = 0;
       int diff;
       int i, j;
+      int lim;
       for (i = 0; i < poolSize; i++)
       {
+        lim = parents[i].limit1 + 1;
         diff = jobs - parents[i].depth;
         for (j = 0; j < diff; j++)
           nodeIndex[j + sum] = i;
         sum += diff;
         sumOffSets[i] = sum;
+
+        if (jobs - lim < 0)
+          printf("ERROR\n");
+        int F = (lb == 1) ? flop_lb1(jobs, machines, lim) : flop_lb2(jobs, machines, lim);
+        int per_inv = (lb == 1) ? bytes_per_inv_lb1(jobs, machines) : bytes_per_inv_lb2(jobs, machines, lim);
+        // each parent node issues (N - lim) bound calls:
+        totalFlops += (jobs - lim) * F;
+        totalBytes += (jobs - lim) * per_inv;
       }
       // if (counter == 0)
       // {
@@ -559,11 +640,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+  double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
+  double AI = (double)totalFlops / (double)totalBytes;
 
   printf("\nSearch on GPU completed pool.capacity = %d\n", pool.capacity);
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
+  printf("Achieved GFLOPS: %f\n", achievedGOPS);
+  printf("Arithmetic Intensity: %f\n", AI);
 
   /*
     Step 3: We complete the depth-first search on CPU.
@@ -628,7 +713,7 @@ int main(int argc, char *argv[])
   unsigned long long int exploredTree = 0;
   unsigned long long int exploredSol = 0;
 
-  double elapsedTime, timeCudaMemCpy=0, timeCudaMalloc=0, timeKernelCall=0;
+  double elapsedTime, timeCudaMemCpy = 0, timeCudaMalloc = 0, timeKernelCall = 0;
 
   pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeCudaMemCpy, &timeCudaMalloc, &timeKernelCall);
 
