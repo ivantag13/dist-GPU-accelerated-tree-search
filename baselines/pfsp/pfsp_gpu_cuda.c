@@ -230,7 +230,7 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
 {
   FILE *file;
-  file = fopen("stats_pfsp_gpu_cuda.dat", "a");
+  file = fopen("gpu.dat", "a");
   fprintf(file, "S-GPU-opt ta%d lb%d Time[%.4f] memCpy[%.4f] cudaMalloc[%.4f] kernelCall[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", inst, lb, timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, exploredTree, exploredSol, optimum);
   fclose(file);
   return;
@@ -372,10 +372,11 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 }
 
 // Generate children nodes (evaluated on GPU) on CPU
-void generate_children(Node *parents, const int size, const int jobs, int *bounds,
-                       unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool *pool)
+void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
+                       unsigned long long int *exploredSol, int *best, SinglePool *pool, int *index)
 {
   int sum = 0;
+  int childrenIndex = 0;
   for (int i = 0; i < size; i++)
   {
     Node parent = parents[i];
@@ -404,14 +405,17 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
           swap(&child.prmu[depth], &child.prmu[j]);
           child.depth = depth + 1;
           child.limit1 = parent.limit1 + 1;
+          children[childrenIndex] = child;
+          childrenIndex++;
 
-          pushBack(pool, child);
+          //          pushBack(pool, child);
           *exploredTree += 1;
         }
       }
     }
     sum += jobs - depth;
   }
+  *index = childrenIndex;
 }
 
 // Single-GPU PFSP search
@@ -443,7 +447,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   pushBack(&pool, root);
 
   // Timer
-  struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall;
+  struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
   // Bounding data
@@ -545,6 +549,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   // Allocating parents vector on CPU and GPU
   Node *parents = (Node *)malloc(M * sizeof(Node));
+  Node *children = (Node *)malloc(M *jobs * sizeof(Node));
   Node *parents_d;
   cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
@@ -565,9 +570,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   *timeCudaMalloc = (endCudaMalloc.tv_sec - startCudaMalloc.tv_sec) + (endCudaMalloc.tv_nsec - startCudaMalloc.tv_nsec) / 1e9;
 
-  int counter = 0;
+  // int counter = 0;
   int totalFlops = 0;
   int totalBytes = 0;
+  int indexChildren;
+  double timeGenChildren = 0;
 
   while (1)
   {
@@ -630,8 +637,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       /*
         each task generates and inserts its children nodes to the pool.
       */
-      generate_children(parents, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool);
-      counter++;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
+      // generate_children(parents, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool);
+      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
+      pushBackBulk(&pool, children, indexChildren);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
+      timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
+
+      // counter++;
     }
     else
     {
@@ -649,6 +662,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Elapsed time: %f [s]\n", t2);
   printf("Achieved GFLOPS: %f\n", achievedGOPS);
   printf("Arithmetic Intensity: %f\n", AI);
+  printf("Time in Generate Children: %f\n", timeGenChildren);
 
   /*
     Step 3: We complete the depth-first search on CPU.
