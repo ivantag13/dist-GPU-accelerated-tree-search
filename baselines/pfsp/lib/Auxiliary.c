@@ -57,3 +57,31 @@ int findMin(int arr[], int size) {
 
   return minVal; // Return the minimum value
 }
+
+// Function to find the minimum value in an array of integers
+int findMaxInt(int arr[], int size) {
+  int maxVal = arr[0]; // Initialize minVal with the first element
+
+  // Iterate through the array to find the minimum value
+  for (int i = 1; i < size; i++) {
+    if (arr[i] > maxVal) {
+      maxVal = arr[i]; // Update minVal if current element is smaller
+    }
+  }
+
+  return maxVal; // Return the minimum value
+}
+
+// Function to find the minimum value in an array of integers
+double findMaxDouble(double arr[], int size) {
+  double maxVal = arr[0]; // Initialize minVal with the first element
+
+  // Iterate through the array to find the minimum value
+  for (int i = 1; i < size; i++) {
+    if (arr[i] > maxVal) {
+      maxVal = arr[i]; // Update minVal if current element is smaller
+    }
+  }
+
+  return maxVal; // Return the minimum value
+}
