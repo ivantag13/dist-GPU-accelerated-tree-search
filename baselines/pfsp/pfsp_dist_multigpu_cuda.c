@@ -204,7 +204,7 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
 {
   FILE *file;
   file = fopen("distMultigpu_sharing.dat", "a");
-  fprintf(file, "ta%d lb%d %dthreads %dGPU %.4f %llu %llu %d\n", inst, lb, commSize, D, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "Proc[%d] GPU[%d] ta%d lb%d %.4f %llu %llu %d\n", commSize, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fclose(file);
   return;
 }
@@ -1124,7 +1124,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     printf("Number of explored solutions: %llu\n", *exploredSol);
     printf("Elapsed time: %f [s]\n", t3);
 
-    printf("\nProc[%d] Exploration terminated.\n", MPIRank);
+    printf("\nExploration terminated.\n", MPIRank);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
