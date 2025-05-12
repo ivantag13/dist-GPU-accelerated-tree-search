@@ -597,22 +597,24 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   startTime = omp_get_wtime();
 
+  double timeDevice[D];
+
 // TODO: implement reduction using omp directives
 #pragma omp parallel num_threads(D) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag, pool, multiPool,    \
                                                jobs, machines, lbound1, lbound2, lb, m, M, D, perc, ws, best, exploredTree, exploredSol,     \
                                                elapsedTime, expTreeGPU, expSolGPU, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, \
-                                               timeCudaMalloc, timeKernelCall, timeIdle, timeTermination, genChildren)
+                                               timeCudaMalloc, timeKernelCall, timeIdle, timeTermination, genChildren, timeDevice)
   // for (int gpuID = 0; gpuID < D; gpuID++)
   {
     double startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall,
-        startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren; //,startPool, endPool, startSetDevice, endSetDevice;
+        startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren, startPool, endPool, startSetDevice, endSetDevice;
     int nSteal = 0, nSSteal = 0;
-
-    // startSetDevice = omp_get_wtime();
     int gpuID = omp_get_thread_num();
+    startSetDevice = omp_get_wtime();
     cudaSetDevice(gpuID);
-    // endSetDevice = omp_get_wtime();
-    // double timeSetDevice = endSetDevice - startSetDevice;
+    endSetDevice = omp_get_wtime();
+    double timeSetDevice = endSetDevice - startSetDevice;
+    timeDevice[gpuID] = timeSetDevice;
     // printf("GPU[%d] Time to set device: %f\n", gpuID, timeSetDevice);
 
     // startPool = omp_get_wtime();
@@ -916,6 +918,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   endTime = omp_get_wtime();
   double t2 = endTime - startTime;
+
+  double maxDevice = findMaxDouble(timeDevice, D);
+  t2 -= maxDevice;
 
   for (int i = 0; i < D; i++)
   {
