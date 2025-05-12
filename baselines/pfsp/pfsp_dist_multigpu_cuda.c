@@ -204,7 +204,7 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
 {
   FILE *file;
   file = fopen("distMultigpu.dat", "a");
-  fprintf(file, "Proc[%d] GPU[%d] ta%d lb%d %.4f %llu %llu %d\n", inst, lb, commSize, D, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "Proc[%d] GPU[%d] ta%d lb%d %.4f %llu %llu %d\n", commSize, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fclose(file);
   return;
 }
