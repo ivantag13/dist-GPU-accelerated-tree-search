@@ -203,8 +203,8 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer)
 {
   FILE *file;
-  file = fopen("stats_pfsp_dist_multigpu_cuda.dat", "a");
-  fprintf(file, "ta%d lb%d %dthreads %dGPU %.4f %llu %llu %d\n", inst, lb, commSize, D, timer, exploredTree, exploredSol, optimum);
+  file = fopen("distMultigpu_stealing.dat", "a");
+  fprintf(file, "Proc[%d] GPU[%d] ta%d lb%d %.4f %llu %llu %d\n", commSize, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fclose(file);
   return;
 }
@@ -343,9 +343,11 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 }
 
 // Generate children nodes (evaluated on GPU) on CPU
-void generate_children(Node *parents, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool_ext *pool)
+void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
+                       unsigned long long int *exploredSol, int *best, SinglePool_ext *pool, int *index)
 {
   int sum = 0;
+  int childrenIndex = 0;
   for (int i = 0; i < size; i++)
   {
     Node parent = parents[i];
@@ -374,14 +376,17 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
           swap(&child.prmu[depth], &child.prmu[j]);
           child.depth = depth + 1;
           child.limit1 = parent.limit1 + 1;
+          children[childrenIndex] = child;
+          childrenIndex++;
 
-          pushBack(pool, child);
+          //  pushBack(pool, child);
           *exploredTree += 1;
         }
       }
     }
     sum += jobs - depth;
   }
+  *index = childrenIndex;
 }
 
 // Distributed Multi-GPU PFSP search
@@ -453,7 +458,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     Step 2: We continue the search on GPU in a depth-first manner, until there
     is not enough work.
   */
-  startTime = omp_get_wtime();
 
   const int poolSize = pool.size;
   const int c = poolSize / commSize;
@@ -513,15 +517,30 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   int global_termination_flag = 0;
   int poolSizes_all[D];
 
-#pragma omp parallel num_threads(D + 1) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, pool_lloc, multiPool, lbound1, lbound2) // reduction(min:best_l)
+  double timeDevice[D];
+
+  startTime = omp_get_wtime();
+
+#pragma omp parallel num_threads(D + 1) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag,  \
+                                                   pool_lloc, multiPool, jobs, machines, lbound1, lbound2, lb, m, M, D, perc, \
+                                                   best, exploredTree, exploredSol, global_termination_flag, poolSizes_all, timeDevice) // reduction(min:best_l)
   // for (int gpuID = 0; gpuID < D; gpuID++)
   {
-    int gpuID = omp_get_thread_num();
-    // printf("From Proc[%d] Thread[%d] Started MPI+Threading\n", MPIRank, gpuID);
-    if (gpuID != D)
-      cudaSetDevice(gpuID);
 
+    double startSetDevice, endSetDevice; // startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall,
+    // startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren, startPool, endPool,
     int nSteal = 0, nSSteal = 0;
+    int gpuID = omp_get_thread_num();
+
+    // WARNING: gpuID == D does not managed a GPU!!!
+    if (gpuID != D)
+    {
+      startSetDevice = omp_get_wtime();
+      cudaSetDevice(gpuID);
+      endSetDevice = omp_get_wtime();
+      double timeSetDevice = endSetDevice - startSetDevice;
+      timeDevice[gpuID] = timeSetDevice;
+    }
 
     unsigned long long int tree = 0, sol = 0;
     SinglePool_ext *pool_loc;
@@ -603,6 +622,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));
+    Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
@@ -620,22 +640,22 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int *bounds_d;
     cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
+    int indexChildren;
+
 #pragma omp barrier
 
     int termination_flag = 1;
     int global_flags[commSize];
     int counter = 0;
-    // printf("From Proc[%d] Thread[%d] Before While Loop\n", MPIRank, gpuID);
 
     while (1)
     {
       counter++;
       if (global_termination_flag)
       {
-        // printf("From Proc[%d] Thread[%d] Global Termination Reached\n", MPIRank, gpuID);
         break;
       }
-      // Work Sharing by Last Thread
+      // Work Stealing by Last Thread
       if (gpuID == D)
       {
         // Termination Detection of GPU-accelerated step
@@ -654,13 +674,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         for (int i = 0; i < commSize; i++)
           termination += global_flags[i];
 
-        if (termination == 0) // || allTasksIdleFlag == true) // not only termination has to be checked, but also the poolSizes of other threads
+        // Warning: poolSizes_all has to be rechecked?
+        // int sumPoolSizes = 0;
+        // for (int i = 0; i < D; i++)
+        //   sumPoolSizes += poolSizes_all[i];
+        if (termination == 0) // || sumPoolSizes == 0)
           global_termination_flag = 1;
 
-        // If no Termination, we proceed to work sharing/work stealing (all is done within this if condition)
+        // If no Termination, we proceed to work sharing/work stealing
         if (!global_termination_flag)
         {
-
           // Step 1: Check if any process needs work (below threshold)
           int threshold = commSize * 2 * m * D;
           int needs_work = 1;
@@ -671,7 +694,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           }
           int all_needs_work[commSize];
 
-          // Exchange work needs information
+          // Exchange information about work need
           MPI_Allgather(&needs_work, 1, MPI_INT, all_needs_work, 1, MPI_INT, MPI_COMM_WORLD);
 
           // Count how many processes need work
@@ -682,8 +705,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               needy_count++;
           }
 
-          // Step 2: Determine how much to share (if this process has work)
-          Node *sharedNodes = NULL; // = (Node *)malloc(sizeof(Node));
+          // Step 2: Determine how much to give to steal request (if this process has work)
+          Node *sharedNodes = NULL;
           int sharedSize = 0;
           int halfSizes;
           // Only proceed if some (but not all) processes need work
@@ -695,14 +718,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               {
                 Node *sharedNodesPartial;
                 sharedNodesPartial = popBackBulkHalf(&multiPool[j], m, M, &halfSizes);
-                // sharedSize += halfSizes;
+
+                // If halfSizes > 0, there is local data to share
                 if (halfSizes > 0)
                 {
                   if (sharedNodes == NULL)
                     sharedNodes = (Node *)malloc(halfSizes * sizeof(Node));
                   else
                     sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
-                  // Optimization
+
+                  // Optimization (?)
                   // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
                   for (int k = 0; k < halfSizes; k++)
                     sharedNodes[sharedSize + k] = sharedNodesPartial[k];
@@ -720,10 +745,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
           // Each process sends its sharedSize to all other processes
           MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
-          // if (counter % 100 == 0)
-          //   printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
 
-          // Step 4: Calculate displacements for the received data
+          // Step 4: Compute displacements for the received data
           int totalReceived = 0;
           for (int i = 0; i < commSize; i++)
           {
@@ -731,10 +754,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             recvDispls[i] = totalReceived;
             totalReceived += recvCounts[i];
           }
-          // if (counter % 100 == 0)
-          //   printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
 
-          // Step 5: Allocate a buffer to store all received shared data
+          // Step 5: Allocate a buffer to store all received data
           Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
           if (receivedNodes == NULL)
           {
@@ -742,12 +763,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
           }
 
-          // Step 6: Gather all shared data into the receivedNodes buffer
+          // Step 6: Gather all data into the receivedNodes buffer
           MPI_Allgatherv(sharedNodes, sharedSize, myNode,
                          receivedNodes, recvCounts, recvDispls, myNode,
                          MPI_COMM_WORLD);
 
-          // Step 6: Redistribute nodes (only for processes that need work)
+          // Step 6: Redistribute nodes (only for processes that needed work)
           if (needs_work && totalReceived > 0)
           {
             int nodesPerProcess = totalReceived / needy_count; // Number of nodes each process will recover from every other process
@@ -757,7 +778,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             Node *insertNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
 
             int added = 0;
-            // Calculate our position in the list of needy processes
+            // Calculate position in the list of needy processes
             int needy_position = 0;
             for (int i = 0; i < MPIRank; i++)
             {
@@ -776,9 +797,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * needy_count + needy_position];
               added++;
             }
-
-            // if (counter % 100 == 0)
-            //   printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
 
             pushBackBulk(&multiPool[0], insertNodes, added);
             free(insertNodes);
@@ -829,13 +847,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           // numBounds is the 'size' of the problem
           evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
           // evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
-  
+
           cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
 
           /*
             Each task generates and inserts its children nodes to the pool.
           */
-          generate_children(parents, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc);
+          // generate_children(parents, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc);
+          generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+          pushBackBulk(pool_loc, children, indexChildren);
         }
         else
         {
@@ -976,6 +996,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   endTime = omp_get_wtime();
   double t2, t2Temp = endTime - startTime;
+  double maxDevice = findMaxDouble(timeDevice, D);
+  t2Temp -= maxDevice;
+
   MPI_Reduce(&t2Temp, &t2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
   // GPU
@@ -1088,6 +1111,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   /*
     Step 3: We complete the depth-first search on CPU.
   */
+  double t3;
   if (MPIRank == 0)
   {
     int count = 0;
@@ -1101,6 +1125,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, &pool);
       count++;
     }
+    endTime = omp_get_wtime();
+    t3 = endTime - startTime;
+    *elapsedTime = t1 + t2 + t3;
   }
 
   // printf("After Proc[%d] Before Step 3\n", MPIRank);
@@ -1117,15 +1144,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     free(displs);
     free(masterNodes);
 
-    endTime = omp_get_wtime();
-    double t3 = endTime - startTime;
-    *elapsedTime = t1 + t2 + t3;
     printf("\nSearch on CPU completed\n");
     printf("Size of the explored tree: %llu\n", *exploredTree);
     printf("Number of explored solutions: %llu\n", *exploredSol);
     printf("Elapsed time: %f [s]\n", t3);
 
-    printf("\nProc[%d] Exploration terminated.\n", MPIRank);
+    printf("\nExploration terminated.\n", MPIRank);
   }
 
   MPI_Barrier(MPI_COMM_WORLD);
