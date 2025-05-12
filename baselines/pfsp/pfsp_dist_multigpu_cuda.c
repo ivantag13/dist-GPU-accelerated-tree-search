@@ -802,7 +802,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   endTime = omp_get_wtime();
   double t2, t2Temp = endTime - startTime;
   double maxDevice = findMaxDouble(timeDevice, D);
-  t2 -= maxDevice;
+  t2Temp -= maxDevice;
 
   MPI_Reduce(&t2Temp, &t2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
