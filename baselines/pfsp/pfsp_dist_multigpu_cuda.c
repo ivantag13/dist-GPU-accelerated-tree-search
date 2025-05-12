@@ -684,10 +684,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           termination += global_flags[i];
 
         // Warning: poolSizes_all has to be rechecked?
-        int sumPoolSizes = 0;
-        for (int i = 0; i < D; i++)
-          sumPoolSizes += poolSizes_all[i];
-        if (termination == 0 || sumPoolSizes == 0)
+        // int sumPoolSizes = 0;
+        // for (int i = 0; i < D; i++)
+        //   sumPoolSizes += poolSizes_all[i];
+        if (termination == 0) // || sumPoolSizes == 0)
           global_termination_flag = 1;
 
         // If no Termination, we proceed to work sharing/work stealing
