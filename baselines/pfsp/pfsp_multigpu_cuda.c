@@ -198,10 +198,10 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
                         double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination)
 {
   double maxTimeIdle, maxTimeTermination, maxTimeCudaMalloc, maxCudaMemcpy;
-  maxTimeIdle = findMaxDouble(timeIdle, D);
-  maxTimeTermination = findMaxDouble(timeTermination, D);
-  maxTimeCudaMalloc = findMaxDouble(timeCudaMalloc, D);
-  maxCudaMemcpy = findMaxDouble(timeCudaMemCpy, D);
+  maxTimeIdle = get_max(timeIdle, D);
+  maxTimeTermination = get_max(timeTermination, D);
+  maxTimeCudaMalloc = get_max(timeCudaMalloc, D);
+  maxCudaMemcpy = get_max(timeCudaMemCpy, D);
   FILE *file;
   file = fopen("multigpu.dat", "a");
   fprintf(file, "\nMGPU-opt[%d]WS[%d] ta%d lb%d Time[%.4f] Max(IdleTime[%.4f]/Termination[%.4f]/Malloc[%.4f]/MemCpy[%.4f]) Tree[%llu] Sol[%llu] Best[%d]\n", D, ws, inst, lb, timer, maxTimeIdle, maxTimeTermination, maxTimeCudaMalloc, maxCudaMemcpy, exploredTree, exploredSol, optimum);
@@ -607,7 +607,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   // for (int gpuID = 0; gpuID < D; gpuID++)
   {
     double startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall,
-        startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren, startPool, endPool, startSetDevice, endSetDevice;
+        startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren, startSetDevice, endSetDevice;
     int nSteal = 0, nSSteal = 0;
     int gpuID = omp_get_thread_num();
     startSetDevice = omp_get_wtime();
@@ -919,7 +919,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   endTime = omp_get_wtime();
   double t2 = endTime - startTime;
 
-  double maxDevice = findMaxDouble(timeDevice, D);
+  double maxDevice = get_max(timeDevice, D);
   t2 -= maxDevice;
 
   for (int i = 0; i < D; i++)
