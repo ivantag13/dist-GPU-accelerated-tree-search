@@ -22,6 +22,10 @@ void permute(int* arr, int n);
 
 int findMin(int arr[], int size);
 
+int findMaxInt(int arr[], int size);
+
+double findMaxDouble(double arr[], int size);
+
 #ifdef __cplusplus
 }
 #endif
