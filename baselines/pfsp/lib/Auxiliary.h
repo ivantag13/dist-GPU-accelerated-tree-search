@@ -8,6 +8,8 @@ extern "C" {
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
 
 #define BUSY false
 #define IDLE true
@@ -24,7 +26,23 @@ int findMin(int arr[], int size);
 
 int findMaxInt(int arr[], int size);
 
-double findMaxDouble(double arr[], int size);
+int compare_doubles(const void *a, const void *b);
+
+double get_min(const double *vec, int size);
+
+double get_max(const double *vec, int size);
+
+double get_median(const double *sorted, int size);
+
+double get_quartile(const double *sorted, int size, double percentile);
+
+void get_quartiles_tukey(const double* sorted, int size, double* q1, double* q3);
+
+double get_percentile(const double *sorted, int n, double pct);
+
+double get_stddev(const double *vec, int size);
+
+void compute_boxplot_stats(const double* vec, int size, FILE* file);
 
 #ifdef __cplusplus
 }
