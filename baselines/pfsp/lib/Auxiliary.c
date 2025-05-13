@@ -97,67 +97,98 @@ int compare_doubles(const void *a, const void *b)
   return (diff > 0) - (diff < 0);
 }
 
-double get_min(const double *vec, int D)
+double get_min(const double *vec, int size)
 {
   double min = vec[0];
-  for (int i = 1; i < D; i++)
+  for (int i = 1; i < size; i++)
     if (vec[i] < min)
       min = vec[i];
   return min;
 }
 
-double get_max(const double *vec, int D)
+double get_max(const double *vec, int size)
 {
   double max = vec[0];
-  for (int i = 1; i < D; i++)
+  for (int i = 1; i < size; i++)
     if (vec[i] > max)
       max = vec[i];
   return max;
 }
 
-double get_median(const double *sorted, int D)
+double get_median(const double *sorted, int size)
 {
-  if (D % 2 == 0)
-    return (sorted[D / 2 - 1] + sorted[D / 2]) / 2.0;
+  if (size % 2 == 0)
+    return (sorted[size / 2 - 1] + sorted[size / 2]) / 2.0;
   else
-    return sorted[D / 2];
+    return sorted[size / 2];
 }
 
-double get_quartile(const double *sorted, int D, double percentile)
+double get_quartile(const double *sorted, int size, double percentile)
 {
-  double pos = percentile * (D - 1);
+  double pos = percentile * (size - 1);
   int lower = (int)pos;
   double delta = pos - lower;
   return sorted[lower] + delta * (sorted[lower + 1] - sorted[lower]);
 }
 
-double get_stddev(const double *vec, int D)
-{
-  double sum = 0.0, mean, stddev = 0.0;
-  for (int i = 0; i < D; i++)
-    sum += vec[i];
-  mean = sum / D;
-  for (int i = 0; i < D; i++)
-    stddev += (vec[i] - mean) * (vec[i] - mean);
-  return sqrt(stddev / D);
+void get_quartiles_tukey(const double* sorted, int size, double* q1, double* q3) {
+  int mid = size / 2;
+
+  if (size % 2 == 0) {
+      // Even: lower half = [0 .. mid-1], upper half = [mid .. size-1]
+      *q1 = get_median(sorted, mid);
+      *q3 = get_median(sorted + mid, mid);
+  } else {
+      // Odd: lower half = [0 .. mid-1], upper half = [mid+1 .. size-1]
+      *q1 = get_median(sorted, mid);
+      *q3 = get_median(sorted + mid + 1, mid);
+  }
 }
 
-void compute_boxplot_stats(const double *vec, int D, FILE *file)
+double get_percentile(const double *sorted, int n, double pct) {
+  if (n < 1) return 0.0;
+  double idx = pct * (n - 1);
+  int lo = (int)floor(idx);
+  double frac = idx - lo;
+  if (lo + 1 < n)
+      return sorted[lo] + frac * (sorted[lo+1] - sorted[lo]);
+  else
+      return sorted[lo];
+}
+
+double get_stddev(const double *vec, int size)
 {
-  double *sorted = malloc(D * sizeof(double));
-  for (int i = 0; i < D; i++)
+  double sum = 0.0, mean, stddev = 0.0;
+  for (int i = 0; i < size; i++)
+    sum += vec[i];
+  mean = sum / size;
+  for (int i = 0; i < size; i++)
+    stddev += (vec[i] - mean) * (vec[i] - mean);
+  return sqrt(stddev / size);
+}
+
+void compute_boxplot_stats(const double *vec, int size, FILE *file)
+{
+  double *sorted = malloc(size * sizeof(double));
+  double mean = 0;
+  for (int i = 0; i < size; i++){
     sorted[i] = vec[i];
-  qsort(sorted, D, sizeof(double), compare_doubles);
+    mean += vec[i];
+  }
+  mean /= size;
+  qsort(sorted, size, sizeof(double), compare_doubles);
 
+  double q1, q3;
   double min = sorted[0];
-  double max = sorted[D - 1];
-  double q1 = get_quartile(sorted, D, 0.25);
-  double median = get_median(sorted, D);
-  double q3 = get_quartile(sorted, D, 0.75);
-  double stddev = get_stddev(vec, D);
+  double max = sorted[size - 1];
+  double median = get_median(sorted, size);
+  get_quartiles_tukey(sorted, size, &q1, &q3);
+  //double q1 = get_percentile(sorted, size, 0.25);
+  //double q3 = get_percentile(sorted, size, 0.75);
+  double stddev = get_stddev(vec, size);
 
-  fprintf(file, "Min: %.3f  Q1: %.3f  Median: %.3f  Q3: %.3f  Max: %.3f  StdDev: %.3f\n",
-          min, q1, median, q3, max, stddev);
+  fprintf(file, "Min: %.3f  Q1: %.3f  Median: %.3f  Mean: %.3f  Q3: %.3f  Max: %.3f  StdDev: %.3f\n",
+          min, q1, median, mean, q3, max, stddev);
 
   free(sorted);
 }

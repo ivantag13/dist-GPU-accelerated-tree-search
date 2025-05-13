@@ -28,17 +28,21 @@ int findMaxInt(int arr[], int size);
 
 int compare_doubles(const void *a, const void *b);
 
-double get_min(const double *vec, int D);
+double get_min(const double *vec, int size);
 
-double get_max(const double *vec, int D);
+double get_max(const double *vec, int size);
 
-double get_median(const double *sorted, int D);
+double get_median(const double *sorted, int size);
 
-double get_quartile(const double *sorted, int D, double percentile);
+double get_quartile(const double *sorted, int size, double percentile);
 
-double get_stddev(const double *vec, int D);
+void get_quartiles_tukey(const double* sorted, int size, double* q1, double* q3);
 
-void compute_boxplot_stats(const double* vec, int D, FILE* file);
+double get_percentile(const double *sorted, int n, double pct);
+
+double get_stddev(const double *vec, int size);
+
+void compute_boxplot_stats(const double* vec, int size, FILE* file);
 
 #ifdef __cplusplus
 }
