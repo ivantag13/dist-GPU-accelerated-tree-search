@@ -795,8 +795,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
 
           //DEBUGGING
-          if (counter % 100 == 0)
-            printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
 
           // Step 3: Compute displacements for the received data
           int totalReceived = 0;
