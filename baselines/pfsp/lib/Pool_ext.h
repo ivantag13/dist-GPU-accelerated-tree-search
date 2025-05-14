@@ -33,6 +33,8 @@ void pushBack(SinglePool_ext* pool, Node node);
 
 void pushBackBulk(SinglePool_ext* pool, Node* nodes, int size);
 
+void pushBackBulkFree(SinglePool_ext *pool, Node *nodes, int size);
+
 Node popBack(SinglePool_ext* pool, int* hasWork);
 
 Node popBackFree(SinglePool_ext* pool, int* hasWork);
