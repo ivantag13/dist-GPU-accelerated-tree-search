@@ -713,11 +713,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     int termination_flag = 1;
     int global_flags[commSize];
-    // int counter = 0;
+    int counter = 0;
 
     while (1)
     {
-      // counter++;
+      counter++;
       if (global_termination_flag)
       {
         break;
@@ -866,7 +866,42 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               added++;
             }
 
-            pushBackBulk(&multiPool[0], insertNodes, added);
+            // pushBackBulk(&multiPool[0], insertNodes, added);
+            //  DEBUGGING
+            if (counter % 100 == 0)
+              printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
+
+            // for (int i = 0; i < D; i++)
+            // {
+            //   bool expected;
+            //   while (!atomic_compare_exchange_strong(&(multiPool[i].lock), &expected, true))
+            //   {
+            //     expected = false;
+            //   }
+            // }
+
+            int dev = 2;
+            int base = added / dev;
+            int rem = added % dev;
+            for (int i = 0; i < dev; i++)
+            {
+              int start = i * base + (i < rem ? i : rem);
+              int len = base + (i < rem ? 1 : 0);
+              if (i == 0)
+              {
+                if (counter % 100 == 0)
+                  printf("Proc[%d] GPU[%d] added = %d at counter[%d]\n", MPIRank, i, len, counter);
+                pushBackBulk(&multiPool[0], insertNodes + start, len);
+              }
+              else
+              {
+                if (counter % 100 == 0)
+                  printf("Proc[%d] GPU[%d] added = %d at counter[%d]\n", MPIRank, D - 1, len, counter);
+                pushBackBulk(&multiPool[D - 1], insertNodes + start, len);
+              }
+              // atomic_store(&(multiPool[i].lock), false); // reset lock
+            }
+
             free(insertNodes);
           }
 
