@@ -21,7 +21,7 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/evaluate.h"
-#include "lib/Pool_ext.h"
+#include "lib/Pool_atom.h"
 #include "lib/Auxiliary.h"
 
 /******************************************************************************
@@ -278,7 +278,7 @@ inline void swap(int *a, int *b)
 
 // Evaluate and generate children nodes on CPU.
 void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_ext *pool)
+                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -311,7 +311,7 @@ void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const No
 }
 
 void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_ext *pool)
+                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   int *lb_begin = (int *)malloc(jobs * sizeof(int));
 
@@ -352,7 +352,7 @@ void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const 
 
 void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2,
                    const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
-                   SinglePool_ext *pool)
+                   SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -384,7 +384,7 @@ void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb
   }
 }
 
-void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2, const Node parent, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_ext *pool)
+void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2, const Node parent, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   switch (lb)
   {
@@ -404,7 +404,7 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 
 // Generate children nodes (evaluated on GPU) on CPU
 void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
-                       unsigned long long int *exploredSol, int *best, SinglePool_ext *pool, int *index)
+                       unsigned long long int *exploredSol, int *best, SinglePool_atom *pool, int *index)
 {
   int sum = 0;
   int childrenIndex = 0;
@@ -467,8 +467,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   Node root;
   initRoot(&root, jobs);
 
-  SinglePool_ext pool;
-  initSinglePool_ext(&pool);
+  SinglePool_atom pool;
+  initSinglePool_atom(&pool);
 
   pushBack(&pool, root);
 
@@ -536,8 +536,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   unsigned long long int eachExploredTree[D], eachExploredSol[D];
   int eachBest[D];
 
-  SinglePool_ext pool_lloc;
-  initSinglePool_ext(&pool_lloc);
+  SinglePool_atom pool_lloc;
+  initSinglePool_atom(&pool_lloc);
 
   // each MPI process gets its chunk
   for (int i = 0; i < c; i++)
@@ -563,9 +563,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   pool_lloc.front = 0;
   pool_lloc.size = 0;
 
-  SinglePool_ext multiPool[D];
+  SinglePool_atom multiPool[D];
   for (int i = 0; i < D; i++)
-    initSinglePool_ext(&multiPool[i]);
+    initSinglePool_atom(&multiPool[i]);
 
   // Boolean variables for termination detection
   _Atomic bool allTasksIdleFlag = false;
@@ -611,7 +611,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     }
 
     unsigned long long int tree = 0, sol = 0;
-    SinglePool_ext *pool_loc;
+    SinglePool_atom *pool_loc;
     if (gpuID != D)
       pool_loc = &multiPool[gpuID];
     int best_l = *best;
@@ -921,7 +921,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
             if (victimID != gpuID)
             { // if not me
-              SinglePool_ext *victim;
+              SinglePool_atom *victim;
               victim = &multiPool[victimID];
               nSteal++;
               int nn = 0;
@@ -1035,7 +1035,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       eachExploredSol[gpuID] = sol;
       eachBest[gpuID] = best_l;
 
-      deleteSinglePool_ext(pool_loc);
+      deleteSinglePool_atom(pool_loc);
     }
 
   } // End of parallel region OpenMP
@@ -1214,8 +1214,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     *elapsedTime = t1 + t2 + t3;
   }
   // freeing memory for structs common to all MPI processes
-  deleteSinglePool_ext(&pool);
-  deleteSinglePool_ext(&pool_lloc);
+  deleteSinglePool_atom(&pool);
+  deleteSinglePool_atom(&pool_lloc);
   free_bound_data(lbound1);
   free_johnson_bd_data(lbound2);
 
