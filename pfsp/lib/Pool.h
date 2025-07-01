@@ -30,6 +30,8 @@ void pushBack(SinglePool* pool, Node node);
 
 Node popBack(SinglePool* pool, int* hasWork);
 
+void pushBackBulk(SinglePool *pool, Node *nodes, int size);
+
 int popBackBulk(SinglePool* pool, const int m, const int M, Node* parents);
 
 Node popFront(SinglePool* pool, int* hasWork);

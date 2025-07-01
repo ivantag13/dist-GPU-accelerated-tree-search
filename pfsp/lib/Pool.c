@@ -1,4 +1,5 @@
 #include "Pool.h"
+#include <math.h>
 #include <stdlib.h>
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -22,6 +23,20 @@ void pushBack(SinglePool *pool, Node node)
 
   pool->elements[pool->front + pool->size] = node;
   pool->size += 1;
+}
+
+void pushBackBulk(SinglePool *pool, Node *nodes, int size)
+{
+  if (pool->front + pool->size + size >= pool->capacity)
+  {
+    pool->capacity *= pow(2, ceil(log2((double)(pool->front + pool->size + size) / pool->capacity)));
+    pool->elements = realloc(pool->elements, pool->capacity * sizeof(Node));
+  }
+
+  for (int i = 0; i < size; i++)
+    pool->elements[pool->front + pool->size + i] = nodes[i];
+  pool->size += size;
+  return;
 }
 
 // Removal from the end of the deque.

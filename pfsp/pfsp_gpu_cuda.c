@@ -19,7 +19,7 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/evaluate.h"
-#include "lib/Pool.h"
+#include "lib/Pool_atom.h"
 
 /******************************************************************************
 For qsort function purposes
@@ -33,7 +33,7 @@ int compare_nodes(const void *a, const void *b)
 }
 
 /******************************************************************************
-CUDA error checking
+CUDA functions
 ******************************************************************************/
 
 #define gpuErrchk(ans)                          \
@@ -48,6 +48,64 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
     if (abort)
       exit(code);
   }
+}
+
+// Number of machine‑pairs as a function of M
+//   P = M*(M‑1)/2
+static inline int P_of(int M)
+{
+  return (int)M * (M - 1) / 2;
+}
+
+// FLOP count per single lb1 bound invocation,
+// as a function of N (jobs), M (machines), and lim (limit1):
+static inline int flop_lb1(int N, int M, int lim)
+{
+  // 1) schedule_front: (lim+1) * [1 add + 2*(M‑1) ops]
+  int F_front = (int)(lim) * (1 + 2 * (M - 1));
+  // 2) sum_unscheduled: (N‑(lim+1)) * M adds
+  int F_remain = (int)(N - (lim)) * M;
+  // 3) machine_bound_from_parts: 2 + 4*(M‑1)
+  int F_bind = 2 + 4 * (M - 1);
+  return F_front + F_remain + F_bind;
+}
+
+// Bytes per single lb1‑bound invocation:
+//  - loads  = N*M ints  (schedule_front + sum_unscheduled)
+//  - stores = 1 int      (write one bounds entry)
+//  - total bytes = 4 bytes/Int * (loads + stores)
+static inline int bytes_per_inv_lb1(int N, int M)
+{
+  int loads = (int)N * M;
+  int stores = 1;
+  return 4 * (loads + stores);
+}
+
+// FLOP count per single lb2 bound invocation:
+//   same front/remain cost as lb1, plus the lb_makespan loop over P pairs
+static inline int flop_lb2(int N, int M, int lim)
+{
+  int F_front = (int)(lim) * (1 + 2 * (M - 1));
+  int F_remain = (int)(N - (lim)) * M;
+  int P = P_of(M);
+  // For each pair: 4 ops per unscheduled job + 4 final ops
+  int unsched = (int)(N - (lim));
+  int F_pair = 4 * unsched + 4;
+  int F_makesp = P * F_pair;
+  return F_front + F_remain + F_makesp;
+}
+
+// Bytes per single lb2‑bound invocation:
+//  - loads  = N*M                           (front + remain)
+//           + 3 * P * (N - lim - 1)         (2 p_times + 1 lag per unscheduled job per pair)
+//  - stores = 1
+static inline int bytes_per_inv_lb2(int N, int M, int lim)
+{
+  int P = P_of(M);
+  int uns = (int)N - lim;
+  int loads = (int)N * M + 3 * P * uns;
+  int stores = 1;
+  return 4 * (loads + stores);
 }
 
 /*******************************************************************************
@@ -169,11 +227,11 @@ void print_results(const int optimum, const unsigned long long int exploredTree,
 }
 
 void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int optimum,
-                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer)
+                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
 {
   FILE *file;
-  file = fopen("stats_pfsp_gpu_cuda.dat", "a");
-  fprintf(file, "ta%d lb%d S-GPU %.4f %llu %llu %d\n", inst, lb, timer, exploredTree, exploredSol, optimum);
+  file = fopen("gpu.dat", "a");
+  fprintf(file, "S-GPU-opt ta%d lb%d Time[%.4f] memCpy[%.4f] cudaMalloc[%.4f] kernelCall[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", inst, lb, timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, exploredTree, exploredSol, optimum);
   fclose(file);
   return;
 }
@@ -187,7 +245,7 @@ inline void swap(int *a, int *b)
 
 // Evaluate and generate children nodes on CPU.
 void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool *pool)
+                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -220,7 +278,7 @@ void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const No
 }
 
 void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool *pool)
+                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   int *lb_begin = (int *)malloc(jobs * sizeof(int));
 
@@ -261,7 +319,7 @@ void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const 
 
 void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2,
                    const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
-                   SinglePool *pool)
+                   SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -295,7 +353,7 @@ void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb
 
 void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *const lbound1,
                const lb2_bound_data *const lbound2, const Node parent, unsigned long long int *tree_loc,
-               unsigned long long int *num_sol, SinglePool *pool)
+               unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   switch (lb)
   {
@@ -314,10 +372,11 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 }
 
 // Generate children nodes (evaluated on GPU) on CPU
-void generate_children(Node *parents, const int size, const int jobs, int *bounds,
-                       unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool *pool)
+void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
+                       unsigned long long int *exploredSol, int *best, SinglePool_atom *pool, int *index)
 {
   int sum = 0;
+  int childrenIndex = 0;
   for (int i = 0; i < size; i++)
   {
     Node parent = parents[i];
@@ -346,20 +405,34 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
           swap(&child.prmu[depth], &child.prmu[j]);
           child.depth = depth + 1;
           child.limit1 = parent.limit1 + 1;
+          children[childrenIndex] = child;
+          childrenIndex++;
 
-          pushBack(pool, child);
+          //          pushBack(pool, child);
           *exploredTree += 1;
         }
       }
     }
     sum += jobs - depth;
   }
+  *index = childrenIndex;
 }
 
 // Single-GPU PFSP search
-void pfsp_search(const int inst, const int lb, const int m, const int M, int *best,
-                 unsigned long long int *exploredTree, unsigned long long int *exploredSol, double *elapsedTime)
+void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
+                 unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
 {
+
+  struct cudaDeviceProp prop;
+  int dev = 0;
+  cudaGetDevice(&dev);
+  cudaGetDeviceProperties(&prop, dev);
+  printf("Device name:          %s\n", prop.name);
+  printf("SM count:             %d\n", prop.multiProcessorCount);
+  // printf("CUDA cores/SM (est):  %d\n", e.g. 64);
+  printf("Clock rate (kHz):     %d\n", prop.clockRate);
+  // printf("Memory bandwidth (GB/s): ~%.1f\n",look up or use prop.memoryClockRate & busWidth );
+
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
@@ -368,13 +441,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   Node root;
   initRoot(&root, jobs);
 
-  SinglePool pool;
-  initSinglePool(&pool);
+  SinglePool_atom pool;
+  initSinglePool_atom(&pool);
 
   pushBack(&pool, root);
 
   // Timer
-  struct timespec start, end;
+  struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
   // Bounding data
@@ -398,7 +471,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   {
     // CPU side
     int hasWork = 0;
-    Node parent = popFront(&pool, &hasWork);
+    Node parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -418,6 +491,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   */
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+
+  clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMalloc);
 
   // TODO: add function 'copyBoundsDevice' to perform the deep copy of bounding data
   // Vectors for deep copy of lbound1 to device
@@ -474,6 +549,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   // Allocating parents vector on CPU and GPU
   Node *parents = (Node *)malloc(M * sizeof(Node));
+  Node *children = (Node *)malloc(M * jobs * sizeof(Node));
   Node *parents_d;
   cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
@@ -490,7 +566,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int *bounds_d;
   cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
-  int counter = 0;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMalloc);
+
+  *timeCudaMalloc = (endCudaMalloc.tv_sec - startCudaMalloc.tv_sec) + (endCudaMalloc.tv_nsec - startCudaMalloc.tv_nsec) / 1e9;
+
+  // int counter = 0;
+  int totalFlops = 0;
+  int totalBytes = 0;
+  int indexChildren;
+  double timeGenChildren = 0;
 
   while (1)
   {
@@ -501,16 +585,27 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     {
       // qsort(parents, poolSize, sizeof(Node), compare_nodes);
 
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       int sum = 0;
       int diff;
       int i, j;
+      int lim;
       for (i = 0; i < poolSize; i++)
       {
+        lim = parents[i].limit1 + 1;
         diff = jobs - parents[i].depth;
         for (j = 0; j < diff; j++)
           nodeIndex[j + sum] = i;
         sum += diff;
         sumOffSets[i] = sum;
+
+        if (jobs - lim < 0)
+          printf("ERROR\n");
+        int F = (lb == 1) ? flop_lb1(jobs, machines, lim) : flop_lb2(jobs, machines, lim);
+        int per_inv = (lb == 1) ? bytes_per_inv_lb1(jobs, machines) : bytes_per_inv_lb2(jobs, machines, lim);
+        // each parent node issues (N - lim) bound calls:
+        totalFlops += (jobs - lim) * F;
+        totalBytes += (jobs - lim) * per_inv;
       }
       // if (counter == 0)
       // {
@@ -524,16 +619,32 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
       cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
       cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMemCpy);
+      *timeCudaMemCpy += (endCudaMemCpy.tv_sec - startCudaMemCpy.tv_sec) + (endCudaMemCpy.tv_nsec - startCudaMemCpy.tv_nsec) / 1e9;
+
       // numBounds is the 'size' of the problem
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startKernelCall);
       evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
       cudaDeviceSynchronize();
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endKernelCall);
+      *timeKernelCall += (endKernelCall.tv_sec - startKernelCall.tv_sec) + (endKernelCall.tv_nsec - startKernelCall.tv_nsec) / 1e9;
+
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMemCpy);
+      *timeCudaMemCpy += (endCudaMemCpy.tv_sec - startCudaMemCpy.tv_sec) + (endCudaMemCpy.tv_nsec - startCudaMemCpy.tv_nsec) / 1e9;
 
       /*
         each task generates and inserts its children nodes to the pool.
       */
-      generate_children(parents, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool);
-      counter++;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
+      // generate_children(parents, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool);
+      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
+      pushBackBulk(&pool, children, indexChildren);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
+      timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
+
+      // counter++;
     }
     else
     {
@@ -542,11 +653,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+  double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
+  double AI = (double)totalFlops / (double)totalBytes;
 
   printf("\nSearch on GPU completed pool.capacity = %d\n", pool.capacity);
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
+  printf("Achieved GFLOPS: %f\n", achievedGOPS);
+  printf("Arithmetic Intensity: %f\n", AI);
+  printf("Time in Generate Children: %f\n", timeGenChildren);
 
   /*
     Step 3: We complete the depth-first search on CPU.
@@ -564,7 +680,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   }
 
   // Freeing memory for structs
-  deleteSinglePool(&pool);
+  deleteSinglePool_atom(&pool);
   free_bound_data(lbound1);
   free_johnson_bd_data(lbound2);
 
@@ -592,6 +708,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
 
+  printf("Times: Total[%f] cudaMemCpy[%f] cudaMalloc[%f] kernelCall[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall);
+
   printf("\nExploration terminated.\n");
 }
 
@@ -609,13 +727,13 @@ int main(int argc, char *argv[])
   unsigned long long int exploredTree = 0;
   unsigned long long int exploredSol = 0;
 
-  double elapsedTime;
+  double elapsedTime, timeCudaMemCpy = 0, timeCudaMalloc = 0, timeKernelCall = 0;
 
-  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime);
+  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeCudaMemCpy, &timeCudaMalloc, &timeKernelCall);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file(inst, machines, jobs, lb, optimum, exploredTree, exploredSol, elapsedTime);
+  print_results_file(inst, machines, jobs, lb, optimum, exploredTree, exploredSol, elapsedTime, timeCudaMemCpy, timeCudaMalloc, timeKernelCall);
 
   return 0;
 }
