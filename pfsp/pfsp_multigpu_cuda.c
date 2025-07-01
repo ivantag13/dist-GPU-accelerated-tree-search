@@ -20,7 +20,7 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/evaluate.h"
-#include "lib/Pool_ext.h"
+#include "lib/Pool_atom.h"
 #include "lib/Auxiliary.h"
 
 /******************************************************************************
@@ -45,7 +45,7 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
 Implementation of the parallel Multi-GPU C+OpenMP+CUDA PFSP search.
 *******************************************************************************/
 
-void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, double *perc)
+void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, double *perc, int *ws)
 {
   *m = 25;
   *M = 50000;
@@ -54,6 +54,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   *ub = 1;
   *D = 1;
   *perc = 0.5;
+  *ws = 1;
   /*
     NOTE: Only forward branching is considered because other strategies increase a
     lot the implementation complexity and do not add much contribution.
@@ -68,13 +69,14 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       {"M", required_argument, NULL, 'M'},
       {"D", required_argument, NULL, 'D'},
       {"perc", required_argument, NULL, 'p'},
+      {"ws", required_argument, NULL, 'w'},
       {NULL, 0, NULL, 0} // Terminate options array
   };
 
   int opt, value;
   int option_index = 0;
 
-  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:p:", long_options, &option_index)) != -1)
+  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:p:w:", long_options, &option_index)) != -1)
   {
     value = atoi(optarg);
 
@@ -143,17 +145,26 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       *perc = (double)value / 100;
       break;
 
+    case 'w':
+      if (value < 0 || value > 1)
+      {
+        fprintf(stderr, "Error: unsupported Work Stealing option\n");
+        exit(EXIT_FAILURE);
+      }
+      *ws = value;
+      break;
+
     default:
-      fprintf(stderr, "Usage: %s --inst <value> --lb <value> --ub <value> --m <value> --M <value> --D <value> --perc <value>\n", argv[0]);
+      fprintf(stderr, "Usage: %s --inst <value> --lb <value> --ub <value> --m <value> --M <value> --D <value> --perc <value> --ws <value>\n", argv[0]);
       exit(EXIT_FAILURE);
     }
   }
 }
 
-void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D)
+void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, int ws)
 {
   printf("\n=================================================\n");
-  printf("Multi-GPU C+OpenMP+CUDA (%d GPUs)\n\n", D);
+  printf("Multi-GPU C+OpenMP+CUDA (%d GPUs - [%d]WS)\n\n", D, ws);
   printf("Resolution of PFSP Taillard's instance: ta%d (m = %d, n = %d)\n", inst, machines, jobs);
   if (ub == 0)
     printf("Initial upper bound: inf\n");
@@ -181,12 +192,140 @@ void print_results(const int optimum, const unsigned long long int exploredTree,
   printf("=================================================\n");
 }
 
-void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, const int optimum,
-                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer)
+void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, int ws, const int optimum,
+                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
+                        unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildren,
+                        unsigned long long int *nStealsGPU, unsigned long long int *nSStealsGPU, unsigned long long int *nTerminationGPU,
+                        double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination,
+                        double *timePoolOps, double *timeGenChildren)
 {
+  double maxTimeIdle, maxTimeTermination, maxTimeCudaMalloc, maxCudaMemcpy;
+  maxTimeIdle = get_max(timeIdle, D);
+  maxTimeTermination = get_max(timeTermination, D);
+  maxTimeCudaMalloc = get_max(timeCudaMalloc, D);
+  maxCudaMemcpy = get_max(timeCudaMemCpy, D);
   FILE *file;
-  file = fopen("stats_pfsp_multigpu_cuda_dyn.dat", "a");
-  fprintf(file, "ta%d lb%d %dGPU %.4f %llu %llu %d\n", inst, lb, D, timer, exploredTree, exploredSol, optimum);
+  file = fopen("multigpu.dat", "a");
+  fprintf(file, "\nMGPU-opt[%d]WS[%d] ta%d lb%d Time[%.4f] Max(IdleTime[%.4f]/Termination[%.4f]/Malloc[%.4f]/MemCpy[%.4f]) Tree[%llu] Sol[%llu] Best[%d]\n", D, ws, inst, lb, timer, maxTimeIdle, maxTimeTermination, maxTimeCudaMalloc, maxCudaMemcpy, exploredTree, exploredSol, optimum);
+  fprintf(file, "Explored Nodes per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", expTreeGPU[i]);
+    else
+      fprintf(file, "%llu\n", expTreeGPU[i]);
+  }
+  if (lb != 2)
+  {
+    fprintf(file, "Explored Solutions per GPU: ");
+    for (int i = 0; i < D; i++)
+    {
+      if (i != D - 1)
+        fprintf(file, "%llu ", expSolGPU[i]);
+      else
+        fprintf(file, "%llu\n", expSolGPU[i]);
+    }
+  }
+  fprintf(file, "Work Stealing (Attempt/Succesful) / Termination Checks per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu/%llu/%llu ", nStealsGPU[i], nSStealsGPU[i], nTerminationGPU[i]);
+    else
+      fprintf(file, "%llu/%llu/%llu\n", nStealsGPU[i], nSStealsGPU[i], nTerminationGPU[i]);
+  }
+  fprintf(file, "Time kernelCall per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%.4f ", timeKernelCall[i]);
+    else
+      fprintf(file, "%.4f\n", timeKernelCall[i]);
+  }
+  fclose(file);
+
+  file = fopen("multigpu_detail.dat", "a");
+  fprintf(file, "\nMGPU-opt[%d]WS[%d] ta%d lb%d Time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", D, ws, inst, lb, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "Explored Nodes per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", expTreeGPU[i]);
+    else
+      fprintf(file, "%llu\n", expTreeGPU[i]);
+  }
+  fprintf(file, "Explored Solutions per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", expSolGPU[i]);
+    else
+      fprintf(file, "%llu\n", expSolGPU[i]);
+  }
+  fprintf(file, "Attempt Work Stealing per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", nStealsGPU[i]);
+    else
+      fprintf(file, "%llu\n", nStealsGPU[i]);
+  }
+  fprintf(file, "Succesful Work Stealing per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", nSStealsGPU[i]);
+    else
+      fprintf(file, "%llu\n", nSStealsGPU[i]);
+  }
+  fprintf(file, "Termination Checks per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%llu ", nTerminationGPU[i]);
+    else
+      fprintf(file, "%llu\n", nTerminationGPU[i]);
+  }
+  fprintf(file, "Time cudaMemcpy per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%.4f ", timeCudaMemCpy[i]);
+    else
+      fprintf(file, "%.4f\n", timeCudaMemCpy[i]);
+  }
+  fprintf(file, "Time cudaMalloc per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%.4f ", timeCudaMalloc[i]);
+    else
+      fprintf(file, "%.4f\n", timeCudaMalloc[i]);
+  }
+  fprintf(file, "Time kernelCall per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%.4f ", timeKernelCall[i]);
+    else
+      fprintf(file, "%.4f\n", timeKernelCall[i]);
+  }
+  fprintf(file, "Time Idle per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%.4f ", timeIdle[i]);
+    else
+      fprintf(file, "%.4f\n", timeIdle[i]);
+  }
+  fprintf(file, "Time Termination per GPU: ");
+  for (int i = 0; i < D; i++)
+  {
+    if (i != D - 1)
+      fprintf(file, "%.4f ", timeTermination[i]);
+    else
+      fprintf(file, "%.4f\n\n", timeTermination[i]);
+  }
   fclose(file);
   return;
 }
@@ -200,7 +339,7 @@ inline void swap(int *a, int *b)
 
 // Evaluate and generate children nodes on CPU.
 void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_ext *pool)
+                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -233,7 +372,7 @@ void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const No
 }
 
 void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_ext *pool)
+                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   int *lb_begin = (int *)malloc(jobs * sizeof(int));
 
@@ -274,7 +413,7 @@ void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const 
 
 void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2,
                    const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
-                   SinglePool_ext *pool)
+                   SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -308,7 +447,7 @@ void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb
 
 void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *const lbound1,
                const lb2_bound_data *const lbound2, const Node parent, unsigned long long int *tree_loc,
-               unsigned long long int *num_sol, SinglePool_ext *pool)
+               unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   switch (lb)
   {
@@ -327,10 +466,11 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 }
 
 // Generate children nodes (evaluated on GPU) on CPU
-void generate_children(Node *parents, const int size, const int jobs, int *bounds,
-                       unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool_ext *pool)
+void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds,
+                       unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool_atom *pool, int *index)
 {
   int sum = 0;
+  int childrenIndex = 0;
   for (int i = 0; i < size; i++)
   {
     Node parent = parents[i];
@@ -359,19 +499,24 @@ void generate_children(Node *parents, const int size, const int jobs, int *bound
           swap(&child.prmu[depth], &child.prmu[j]);
           child.depth = depth + 1;
           child.limit1 = parent.limit1 + 1;
+          children[childrenIndex] = child;
+          childrenIndex++;
 
-          pushBack(pool, child);
           *exploredTree += 1;
         }
       }
     }
     sum += jobs - depth;
   }
+  *index = childrenIndex;
 }
 
 // Multi-GPU PFSP search
-void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const double perc, int *best,
-                 unsigned long long int *exploredTree, unsigned long long int *exploredSol, double *elapsedTime)
+void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const double perc, int ws, int *best,
+                 unsigned long long int *exploredTree, unsigned long long int *exploredSol, double *elapsedTime, unsigned long long int *expTreeGPU,
+                 unsigned long long int *expSolGPU, unsigned long long int *genChildren, unsigned long long int *nStealsGPU, unsigned long long int *nSStealsGPU,
+                 unsigned long long int *nTerminationGPU, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle,
+                 double *timeTermination, double *timePoolOps, double *timeGenChildren)
 {
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
@@ -381,8 +526,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   Node root;
   initRoot(&root, jobs);
 
-  SinglePool_ext pool;
-  initSinglePool_ext(&pool);
+  SinglePool_atom pool;
+  initSinglePool_atom(&pool);
 
   pushBack(&pool, root);
 
@@ -436,7 +581,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     is not enough work.
   */
 
-  startTime = omp_get_wtime();
   unsigned long long int eachExploredTree[D], eachExploredSol[D];
   int eachBest[D];
 
@@ -447,20 +591,35 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   pool.front = 0;
   pool.size = 0;
-  SinglePool_ext multiPool[D];
+  SinglePool_atom multiPool[D];
   for (int i = 0; i < D; i++)
-    initSinglePool_ext(&multiPool[i]);
+    initSinglePool_atom(&multiPool[i]);
+
+  startTime = omp_get_wtime();
+
+  double timeDevice[D];
 
 // TODO: implement reduction using omp directives
-#pragma omp parallel for num_threads(D) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, pool, multiPool, lbound1, lbound2)
-  for (int gpuID = 0; gpuID < D; gpuID++)
+#pragma omp parallel num_threads(D) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag, pool, multiPool,                 \
+                                               jobs, machines, lbound1, lbound2, lb, m, M, D, perc, ws, best, exploredTree, exploredSol,                  \
+                                               elapsedTime, expTreeGPU, expSolGPU, genChildren, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, \
+                                               timeCudaMalloc, timeKernelCall, timeIdle, timeTermination, timeDevice)
+  // for (int gpuID = 0; gpuID < D; gpuID++)
   {
-    cudaSetDevice(gpuID);
-
+    double startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startTimePoolOps, endTimePoolOps,
+        startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren, startSetDevice, endSetDevice;
     int nSteal = 0, nSSteal = 0;
+    int gpuID = omp_get_thread_num();
+    startSetDevice = omp_get_wtime();
+    cudaSetDevice(gpuID);
+    endSetDevice = omp_get_wtime();
+    double timeSetDevice = endSetDevice - startSetDevice;
+    timeDevice[gpuID] = timeSetDevice;
+    // printf("GPU[%d] Time to set device: %f\n", gpuID, timeSetDevice);
 
+    // startPool = omp_get_wtime();
     unsigned long long int tree = 0, sol = 0;
-    SinglePool_ext *pool_loc;
+    SinglePool_atom *pool_loc;
     pool_loc = &multiPool[gpuID];
     int best_l = *best;
     bool taskState = BUSY;
@@ -479,7 +638,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       }
       pool_loc->size += l - c;
     }
+    // endPool = omp_get_wtime();
+    // double timePool = endPool - startPool;
+    // printf("GPU[%d] Time to redistribute pool: %f\n", gpuID, timePool);
 
+    startCudaMalloc = omp_get_wtime();
     // TODO: add function 'copyBoundsDevice' to perform the deep copy of bounding data
     // Vectors for deep copy of lbound1 to device
     lb1_bound_data lbound1_d;
@@ -535,6 +698,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));
+    Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
@@ -552,12 +716,20 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int *bounds_d;
     cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
+    endCudaMalloc = omp_get_wtime();
+    timeCudaMalloc[gpuID] = endCudaMalloc - startCudaMalloc;
+
+    int indexChildren;
+
     while (1)
     {
       /*
         Each task gets its parenst nodes from the pool
       */
+      startTimePoolOps = omp_get_wtime();
       int poolSize = popBackBulk(pool_loc, m, M, parents);
+      endTimePoolOps = omp_get_wtime();
+      timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
 
       if (poolSize > 0)
       {
@@ -567,6 +739,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           atomic_store(&eachTaskState[gpuID], BUSY);
         }
 
+        startCudaMemCpy = omp_get_wtime();
         int sum = 0;
         int diff;
         int i, j;
@@ -585,97 +758,130 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
         cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
+        endCudaMemCpy = omp_get_wtime();
+        timeCudaMemCpy[gpuID] += endCudaMemCpy - startCudaMemCpy;
         // numBounds is the 'size' of the problem
+        startKernelCall = omp_get_wtime();
         evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
-        //evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
+        // evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
         cudaDeviceSynchronize();
+        endKernelCall = omp_get_wtime();
+        timeKernelCall[gpuID] += endKernelCall - startKernelCall;
+
+        startCudaMemCpy = omp_get_wtime();
         cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
+        endCudaMemCpy = omp_get_wtime();
+        timeCudaMemCpy[gpuID] += endCudaMemCpy - startCudaMemCpy;
 
         /*
           Each task generates and inserts its children nodes to the pool.
         */
-        generate_children(parents, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc);
+        startGenChildren = omp_get_wtime();
+        generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+        endGenChildren = omp_get_wtime();
+        timeGenChildren[gpuID] += endGenChildren - startGenChildren;
+
+        startTimePoolOps = omp_get_wtime();
+        pushBackBulk(pool_loc, children, indexChildren);
+        endTimePoolOps = omp_get_wtime();
+        timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
+
+        genChildren[gpuID] += indexChildren;
       }
       else
       {
-        // work stealing
-        int tries = 0;
-        bool steal = false;
-        int victims[D];
-        permute(victims, D);
-        bool expected;
-
-        while (tries < D && steal == false)
-        { // WS0 loop
-          const int victimID = victims[tries];
-
-          if (victimID != gpuID)
-          { // if not me
-            SinglePool_ext *victim;
-            victim = &multiPool[victimID];
-            nSteal++;
-            int nn = 0;
-            while (nn < 10)
-            { // WS1 loop
-              expected = false;
-              if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
-              { // get the lock
-                int size = victim->size;
-                int nodeSize = 0;
-
-                if (size >= 2 * m)
-                {
-                  // Node* p = popBackBulkFree(victim, m, M, &nodeSize);
-                  Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
-
-                  if (nodeSize == 0)
-                  {                                       // safety check
-                    atomic_store(&(victim->lock), false); // reset lock
-                    printf("\nDEADCODE\n");
-                    exit(-1);
-                  }
-
-                  /* for i in 0..#(size/2) {
-                    pool_loc.pushBack(p[i]);
-                  } */
-
-                  pushBackBulk(pool_loc, p, nodeSize); // atomic_store inside
-
-                  steal = true;
-                  nSSteal++;
-                  atomic_store(&(victim->lock), false); // reset lock
-                  goto WS0;                             // Break out of WS0 loop
-                }
-
-                atomic_store(&(victim->lock), false); // reset lock
-                break;                                // Break out of WS1 loop
-              }
-
-              nn++;
-            }
-          }
-
-          tries++;
-        }
-
-      WS0:
-        if (steal == false)
-        {
-          // termination
-          if (taskState == BUSY)
-          {
-            taskState = IDLE;
-            atomic_store(&eachTaskState[gpuID], IDLE);
-          }
-          if (allIdle(eachTaskState, D, &allTasksIdleFlag))
-          {
-            break;
-          }
-          continue;
-        }
+        if (ws == 0)
+          break;
         else
         {
-          continue;
+          // Local work stealing
+          startTimeIdle = omp_get_wtime();
+          int tries = 0;
+          bool steal = false;
+          int victims[D];
+          permute(victims, D);
+          bool expected;
+
+          while (tries < D && steal == false)
+          { // WS0 loop
+            const int victimID = victims[tries];
+
+            if (victimID != gpuID)
+            { // if not me
+              SinglePool_atom *victim;
+              victim = &multiPool[victimID];
+              nSteal++;
+              int nn = 0;
+              while (nn < 10)
+              { // WS1 loop
+                expected = false;
+                if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
+                { // get the lock
+                  int size = victim->size;
+                  int nodeSize = 0;
+
+                  if (size >= 2 * m)
+                  {
+                    Node *p = popBackBulkFree(victim, m, M, &nodeSize);
+                    // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
+
+                    if (nodeSize == 0)
+                    {                                       // safety check
+                      atomic_store(&(victim->lock), false); // reset lock
+                      printf("\nDEADCODE\n");
+                      exit(-1);
+                    }
+
+                    startTimePoolOps = omp_get_wtime();
+                    pushBackBulk(pool_loc, p, nodeSize); // atomic_store inside
+                    endTimePoolOps = omp_get_wtime();
+                    timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
+
+                    steal = true;
+                    nSSteal++;
+                    atomic_store(&(victim->lock), false); // reset lock
+                    // endTimeIdle = omp_get_wtime();
+                    // timeIdle[gpuID] += endTimeIdle - startTimeIdle;
+                    goto WS0; // Break out of WS0 loop
+                  }
+
+                  atomic_store(&(victim->lock), false); // reset lock
+                  break;                                // Break out of WS1 loop
+                }
+
+                nn++;
+              }
+            }
+            tries++;
+          }
+
+        WS0:
+          endTimeIdle = omp_get_wtime();
+          timeIdle[gpuID] += endTimeIdle - startTimeIdle;
+          if (steal == false)
+          {
+            startTermination = omp_get_wtime();
+            // termination
+            nTerminationGPU[gpuID]++;
+            if (taskState == BUSY)
+            {
+              taskState = IDLE;
+              atomic_store(&eachTaskState[gpuID], IDLE);
+            }
+            if (allIdle(eachTaskState, D, &allTasksIdleFlag))
+            {
+              endTermination = omp_get_wtime();
+              timeTermination[gpuID] += endTermination - startTermination;
+              break;
+            }
+            endTermination = omp_get_wtime();
+            timeTermination[gpuID] += endTermination - startTermination;
+            continue;
+          }
+          else
+          {
+            continue;
+          }
         }
       }
     }
@@ -700,7 +906,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       for (int i = 0; i < poolLocSize; i++)
       {
         int hasWork = 0;
-        pushBack(&pool, popBack(pool_loc, &hasWork));
+        pushBackFree(&pool, popBackFree(pool_loc, &hasWork));
         if (!hasWork)
           break;
       }
@@ -710,8 +916,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     eachExploredSol[gpuID] = sol;
     eachBest[gpuID] = best_l;
 
-    deleteSinglePool_ext(pool_loc);
+    expTreeGPU[gpuID] = tree;
+    expSolGPU[gpuID] = sol;
+    nStealsGPU[gpuID] = nSteal;
+    nSStealsGPU[gpuID] = nSSteal;
+
+    deleteSinglePool_atom(pool_loc);
   } // End of parallel region
+
+  endTime = omp_get_wtime();
+  double t2 = endTime - startTime;
+
+  double maxDevice = get_max(timeDevice, D);
+  t2 -= maxDevice;
 
   for (int i = 0; i < D; i++)
   {
@@ -720,9 +937,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   }
   *best = findMin(eachBest, D);
 
-  endTime = omp_get_wtime();
-  double t2 = endTime - startTime;
-
   printf("\nSearch on GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
@@ -730,6 +944,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   printf("Workload per GPU: ");
   for (int gpuID = 0; gpuID < D; gpuID++)
     printf("%.2f ", (double)100 * eachExploredTree[gpuID] / ((double)*exploredTree));
+  printf("\n");
+  printf("Time in generate_children : ");
+  for (int i = 0; i < D; i++)
+    printf("%.2f ", timeGenChildren[i]);
   printf("\n");
 
   /*
@@ -748,7 +966,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   }
 
   // Freeing memory for structs common to all steps
-  deleteSinglePool_ext(&pool);
+  deleteSinglePool_atom(&pool);
   free_bound_data(lbound1);
   free_johnson_bd_data(lbound2);
 
@@ -767,26 +985,45 @@ int main(int argc, char *argv[])
 {
   srand(time(NULL));
 
-  int inst, lb, ub, m, M, D;
+  int inst, lb, ub, m, M, D, ws;
   double perc;
-  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &perc);
+  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &perc, &ws);
 
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
 
-  print_settings(inst, machines, jobs, ub, lb, D);
+  print_settings(inst, machines, jobs, ub, lb, D, ws);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
   unsigned long long int exploredTree = 0;
   unsigned long long int exploredSol = 0;
+  unsigned long long int expTreeGPU[D], expSolGPU[D], genChildren[D], nStealsGPU[D], nSStealsGPU[D], nTerminationGPU[D];
 
   double elapsedTime;
+  double timeCudaMemCpy[D], timeCudaMalloc[D], timeKernelCall[D], timeIdle[D], timeTermination[D], timePoolOps[D], timeGenChildren[D];
 
-  pfsp_search(inst, lb, m, M, D, perc, &optimum, &exploredTree, &exploredSol, &elapsedTime);
+  for (int i = 0; i < D; i++)
+  {
+    timeCudaMemCpy[i] = 0;
+    timeCudaMalloc[i] = 0;
+    timeKernelCall[i] = 0;
+    timeIdle[i] = 0;
+    timeTermination[i] = 0;
+    timePoolOps[i] = 0;
+    timeGenChildren[i] = 0;
+    nTerminationGPU[i] = 0;
+    genChildren[i] = 0;
+  }
+
+  pfsp_search(inst, lb, m, M, D, perc, ws, &optimum, &exploredTree, &exploredSol, &elapsedTime,
+              expTreeGPU, expSolGPU, genChildren, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, timeCudaMalloc,
+              timeKernelCall, timeIdle, timeTermination, timePoolOps, timeGenChildren);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file(inst, machines, jobs, lb, D, optimum, exploredTree, exploredSol, elapsedTime);
+  print_results_file(inst, machines, jobs, lb, D, ws, optimum, exploredTree, exploredSol, elapsedTime,
+                     expTreeGPU, expSolGPU, genChildren, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, timeCudaMalloc,
+                     timeKernelCall, timeIdle, timeTermination, timePoolOps, timeGenChildren);
 
   return 0;
 }

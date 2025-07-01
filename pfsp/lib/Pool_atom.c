@@ -1,8 +1,6 @@
-#include "Pool_ext.h"
-#include <stdlib.h>
-#include <math.h>
+#include "Pool_atom.h"
 
-void initSinglePool_ext(SinglePool_ext *pool)
+void initSinglePool_atom(SinglePool_atom *pool)
 {
   pool->elements = (Node *)malloc(INITIAL_CAPACITY * sizeof(Node));
   pool->capacity = INITIAL_CAPACITY;
@@ -12,7 +10,7 @@ void initSinglePool_ext(SinglePool_ext *pool)
 }
 
 // Parallel-safe insertion to the end of the deque.
-void pushBack(SinglePool_ext *pool, Node node)
+void pushBack(SinglePool_atom *pool, Node node)
 {
   bool expected;
   while (true)
@@ -34,8 +32,21 @@ void pushBack(SinglePool_ext *pool, Node node)
   }
 }
 
+// Insertion to the end of the deque.
+void pushBackFree(SinglePool_atom *pool, Node node)
+{
+  if (pool->front + pool->size >= pool->capacity)
+  {
+    pool->capacity *= 2;
+    pool->elements = (Node *)realloc(pool->elements, pool->capacity * sizeof(Node));
+  }
+
+  pool->elements[pool->front + pool->size] = node;
+  pool->size += 1;
+}
+
 // Parallel-safe bulk insertion to the end of the deque.
-void pushBackBulk(SinglePool_ext *pool, Node *nodes, int size)
+void pushBackBulk(SinglePool_atom *pool, Node *nodes, int size)
 {
   bool expected;
   while (true)
@@ -58,8 +69,7 @@ void pushBackBulk(SinglePool_ext *pool, Node *nodes, int size)
   }
 }
 
-// Not parallel-safe bulk insertion to the end of the deque.
-void pushBackBulkFree(SinglePool_ext *pool, Node *nodes, int size)
+void pushBackBulkFree(SinglePool_atom *pool, Node *nodes, int size)
 {
   if (pool->front + pool->size + size >= pool->capacity)
   {
@@ -74,7 +84,7 @@ void pushBackBulkFree(SinglePool_ext *pool, Node *nodes, int size)
 }
 
 // Parallel-safe removal from the end of the deque.
-Node popBack(SinglePool_ext *pool, int *hasWork)
+Node popBack(SinglePool_atom *pool, int *hasWork)
 {
   bool expected;
   while (true)
@@ -102,7 +112,7 @@ Node popBack(SinglePool_ext *pool, int *hasWork)
 }
 
 // Removal from the end of the deque. Parallel-safety is not guaranteed.
-Node popBackFree(SinglePool_ext *pool, int *hasWork)
+Node popBackFree(SinglePool_atom *pool, int *hasWork)
 {
   if (pool->size > 0)
   {
@@ -115,7 +125,7 @@ Node popBackFree(SinglePool_ext *pool, int *hasWork)
 }
 
 // Parallel-safe bulk removal from the end of the deque.
-int popBackBulk(SinglePool_ext *pool, const int m, const int M, Node *parents)
+int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
 {
   bool expected;
   while (true)
@@ -143,8 +153,23 @@ int popBackBulk(SinglePool_ext *pool, const int m, const int M, Node *parents)
   return 0;
 }
 
+// int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
+// {
+//   if (pool->size >= m)
+//   {
+//     const int poolSize = MIN(pool->size, M);
+//     pool->size -= poolSize;
+//     for (int i = 0; i < poolSize; i++)
+//     {
+//       parents[i] = pool->elements[pool->front + pool->size + i];
+//     }
+//     return poolSize;
+//   }
+//   return 0;
+// }
+
 // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
-Node *popBackBulkHalf(SinglePool_ext *pool, const int m, const int M, int *Half)
+Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half)
 {
   bool expected;
   while (true)
@@ -174,7 +199,7 @@ Node *popBackBulkHalf(SinglePool_ext *pool, const int m, const int M, int *Half)
 }
 
 // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
-Node *popBackBulkFree(SinglePool_ext *pool, const int m, const int M, int *poolSize)
+Node *popBackBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize)
 {
   if (pool->size >= 2 * m)
   {
@@ -191,7 +216,7 @@ Node *popBackBulkFree(SinglePool_ext *pool, const int m, const int M, int *poolS
 }
 
 // Removal from the front of the deque. Parallel-safety is not guaranteed.
-Node popFrontFree(SinglePool_ext *pool, int *hasWork)
+Node popFrontFree(SinglePool_atom *pool, int *hasWork)
 {
   if (pool->size > 0)
   {
@@ -204,7 +229,7 @@ Node popFrontFree(SinglePool_ext *pool, int *hasWork)
 }
 
 // Bulk removal from the front of the deque. Parallel-safety is not guaranteed.
-Node *popFrontBulkFree(SinglePool_ext *pool, const int m, const int M, int *poolSize, double perc)
+Node *popFrontBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize, double perc)
 {
   if (pool->size >= 2 * m)
   {
@@ -223,7 +248,7 @@ Node *popFrontBulkFree(SinglePool_ext *pool, const int m, const int M, int *pool
 
 // TODO : In order to implement this function I would have to introduce a new variable
 // inside struct Pool_ext (e.g. back) to keep track of the good indexes and pool size
-/*Node* popHalfFrontHalfBackBulkFree(SinglePool_ext* pool, const int m, const int M, int* poolSize){
+/*Node* popHalfFrontHalfBackBulkFree(SinglePool_atom* pool, const int m, const int M, int* poolSize){
   if(pool->size >= 2*m) {
     *poolSize = pool->size/2;
     int index = *poolSize/2;
@@ -248,7 +273,8 @@ Node *popFrontBulkFree(SinglePool_ext *pool, const int m, const int M, int *pool
   }*/
 
 // Free the memory.
-void deleteSinglePool_ext(SinglePool_ext *pool)
+void deleteSinglePool_atom(SinglePool_atom *pool)
 {
   free(pool->elements);
+  pool->elements = NULL;
 }
