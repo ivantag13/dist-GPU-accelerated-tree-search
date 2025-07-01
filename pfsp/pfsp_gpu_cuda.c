@@ -19,7 +19,7 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/evaluate.h"
-#include "lib/Pool.h"
+#include "lib/Pool_atom.h"
 
 /******************************************************************************
 CUDA functions
@@ -234,7 +234,7 @@ inline void swap(int *a, int *b)
 
 // Evaluate and generate children nodes on CPU.
 void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool *pool)
+                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -267,7 +267,7 @@ void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const No
 }
 
 void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool *pool)
+                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   int *lb_begin = (int *)malloc(jobs * sizeof(int));
 
@@ -308,7 +308,7 @@ void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const 
 
 void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2,
                    const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
-                   SinglePool *pool)
+                   SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -342,7 +342,7 @@ void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb
 
 void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *const lbound1,
                const lb2_bound_data *const lbound2, const Node parent, unsigned long long int *tree_loc,
-               unsigned long long int *num_sol, SinglePool *pool)
+               unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   switch (lb)
   {
@@ -362,7 +362,7 @@ void decompose(const int jobs, const int lb, int *best, const lb1_bound_data *co
 
 // Generate children nodes (evaluated on GPU) on CPU
 void generate_children(Node *parents, const int size, const int jobs, int *bounds,
-                       unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool *pool)
+                       unsigned long long int *exploredTree, unsigned long long int *exploredSol, int *best, SinglePool_atom *pool)
 {
   for (int i = 0; i < size; i++)
   {
@@ -424,8 +424,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   Node root;
   initRoot(&root, jobs);
 
-  SinglePool pool;
-  initSinglePool(&pool);
+  SinglePool_atom pool;
+  initSinglePool_atom(&pool);
 
   pushBack(&pool, root);
 
@@ -454,7 +454,7 @@ a sufficiently large amount of work for GPU computation.
   {
     // CPU side
     int hasWork = 0;
-    Node parent = popFront(&pool, &hasWork);
+    Node parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -641,7 +641,7 @@ a sufficiently large amount of work for GPU computation.
   }
 
   // Freeing memory for structs
-  deleteSinglePool(&pool);
+  deleteSinglePool_atom(&pool);
   free_bound_data(lbound1);
   free_johnson_bd_data(lbound2);
 
