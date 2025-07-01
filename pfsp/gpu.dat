@@ -1,0 +1,1 @@
+S-GPU-opt ta14 lb1 Time[0.3635] memCpy[0.0180] cudaMalloc[0.0001] kernelCall[0.0001] Tree[6107593] Sol[100000] Best[0]
