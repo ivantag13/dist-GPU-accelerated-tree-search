@@ -575,7 +575,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   // TODO: Implement OpenMP reduction to variables best_l, eachExploredTree, eachExploredSol
   // int best_l = *best;
-  int global_termination_flag = 0;
+  int global_termination_flag = 0, local_need = 0, request = 0;
   int poolSizes_all[D];
 
   double timeDevice[D];
@@ -591,7 +591,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
 #pragma omp parallel num_threads(D + 1) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag,  \
                                                    pool_lloc, multiPool, jobs, machines, lbound1, lbound2, lb, m, M, D, perc, \
-                                                   best, exploredTree, exploredSol, global_termination_flag, poolSizes_all, timeDevice) // reduction(min:best_l)
+                                                   best, exploredTree, exploredSol, global_termination_flag, local_need, request, poolSizes_all, timeDevice) // reduction(min:best_l)
   // for (int gpuID = 0; gpuID < D; gpuID++)
   {
 
@@ -752,13 +752,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         if (!global_termination_flag)
         {
           // Step 1: Check if any process needs work (below threshold)
-          int threshold = commSize * 2 * m * D;
-          int needs_work = 1;
-          for (int i = 0; i < D; i++)
-          {
-            if (multiPool[i].size > threshold)
-              needs_work = 0;
-          }
+          // int threshold = commSize * 2 * m * D;
+          int needs_work = local_need;
+          // for (int i = 0; i < D; i++)
+          //{
+          //   if (multiPool[i].size > threshold)
+          //     needs_work = 0;
+          // }
           int all_needs_work[commSize];
 
           // Exchange information about work need
@@ -781,10 +781,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           {
             if (!needs_work)
             {
+              int victims[D];
+              permute(victims, D);
               for (int j = 0; j < D; j++)
               {
                 Node *sharedNodesPartial;
-                sharedNodesPartial = popBackBulkHalf(&multiPool[j], m, M, &halfSizes);
+                sharedNodesPartial = popBackBulkHalf(&multiPool[victims[j]], m, M, &halfSizes);
 
                 // If halfSizes > 0, there is local data to share
                 if (halfSizes > 0)
@@ -800,6 +802,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     sharedNodes[sharedSize + k] = sharedNodesPartial[k];
                   sharedSize += halfSizes;
                   free(sharedNodesPartial);
+                  break;
                 }
               }
             }
@@ -853,20 +856,42 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               if (all_needs_work[i])
                 needy_position++;
             }
-
+            // Nodes recovered by this needy process
             for (int k = 0; k < nodesPerProcess; k++)
             {
               insertNodes[k] = receivedNodes[k * needy_count + needy_position];
               added++;
             }
-            // Remainder per each process (if any)
+            // Remainder of nodes recovered per each process (if any)
             if (remainder > 0 && needy_position < remainder)
             {
               insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * needy_count + needy_position];
               added++;
             }
 
+            // TODO: improve insertion of stolen nodes into multiple local pools
+            // // Total amount of nodes received locally is 'added'
+            // int nbPool; // Amount of local pools receiving nodes from WS
+            // for (nbPool = D; nbPool >= 1; nbPool--)
+            // {
+            //   if (added >= nbPool * m)
+            //     break;
+            // }
+
+            // int nodesPerPool = added / nbPool;
+            // int remainderPool = added % nbPool;
+
+            // for (int k = 0; k < nbPool - 1; k++)
+            // {
+            //   pushBackBulkFree(&multiPool[k], insertNodes + (nodesPerPool * k), nodesPerPool);
+            //   atomic_store(&eachTaskState[k], BUSY);
+            // }
+            // pushBackBulkFree(&multiPool[nbPool - 1], insertNodes + (nodesPerPool * (nbPool - 1)), nodesPerPool + remainderPool);
+            // atomic_store(&eachTaskState[nbPool - 1], BUSY);
+
             pushBackBulk(&multiPool[0], insertNodes, added);
+            atomic_store(&eachTaskState[0], BUSY);
+            local_need = 0;
             free(insertNodes);
           }
 
@@ -1006,6 +1031,24 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             }
             if (allIdle(eachTaskState, D, &allTasksIdleFlag))
             {
+              // Set request for work while checking global termination
+              // request++;
+              // while (request < D)
+              //{
+              //  continue;
+              //}
+              local_need = 1;
+              // atomic_store(&(pool_loc->lock), false);
+              while (!global_termination_flag && local_need)
+              {
+                if (global_termination_flag == 1)
+                  break;
+                if (local_need == 0)
+                {
+                  // request = 0;
+                  break;
+                }
+              }
               continue;
               // break;
             }
