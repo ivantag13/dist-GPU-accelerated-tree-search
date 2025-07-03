@@ -763,10 +763,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           Node *sharedNodes = NULL;
           int sharedSize = 0;
           int halfSizes;
+          int victims[D];
+          permute(victims, D);
           for (int j = 0; j < D; j++)
           {
             Node *sharedNodesPartial;
-            sharedNodesPartial = popBackBulkHalf(&multiPool[j], m, M, &halfSizes);
+            sharedNodesPartial = popBackBulkHalf(&multiPool[victims[j]], m, M, &halfSizes);
 
             // If halfSizes > 0, there is local data to share
             if (halfSizes > 0)
@@ -782,9 +784,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 sharedNodes[sharedSize + k] = sharedNodesPartial[k];
               sharedSize += halfSizes;
               free(sharedNodesPartial);
+              break;
             }
           }
-          if(sharedSize > 0)
+          if (sharedSize > 0)
             nStealsProc[MPIRank]++;
 
           int sendCounts[commSize];
@@ -794,9 +797,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           // Step 2: Gather the sizes of the shared data (sharedSize) from all processess
           MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
 
-          //DEBUGGING
-          // if (counter % 100 == 0)
-          //   printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
+          // DEBUGGING
+          //  if (counter % 100 == 0)
+          //    printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
 
           // Step 3: Compute displacements for the received data
           int totalReceived = 0;
@@ -1084,7 +1087,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   unsigned long long int *allExploredTrees = NULL;
   unsigned long long int *allExploredSols = NULL;
   unsigned long long int *allEachExploredTrees = NULL; // For eachExploredTree array
-  unsigned long long int *allStealsProc = NULL; // For eachExploredTree array
+  unsigned long long int *allStealsProc = NULL;        // For eachExploredTree array
   double *allMaxKernelCall = NULL;
   double *allMaxIdleDevice = NULL;
   if (MPIRank == 0)
