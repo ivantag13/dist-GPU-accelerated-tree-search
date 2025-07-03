@@ -63,7 +63,7 @@ void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
 Implementation of the parallel Distributed Multi-GPU C+MPI+OpenMP+CUDA PFSP search.
 ***********************************************************************************/
 
-void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, double *perc)
+void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, int *w, double *perc)
 {
   *m = 25;
   *M = 50000;
@@ -71,6 +71,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   *lb = 1;
   *ub = 1;
   *D = 1;
+  *w = 1;
   *perc = 0.5;
   /*
     NOTE: Only forward branching is considered because other strategies increase a
@@ -85,6 +86,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       {"m", required_argument, NULL, 'm'},
       {"M", required_argument, NULL, 'M'},
       {"D", required_argument, NULL, 'D'},
+      {"w", required_argument, NULL, 'w'},
       {"perc", required_argument, NULL, 'p'},
       {NULL, 0, NULL, 0} // Terminate options array
   };
@@ -92,7 +94,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   int opt, value;
   int option_index = 0;
 
-  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:p:", long_options, &option_index)) != -1)
+  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:w:p:", long_options, &option_index)) != -1)
   {
     value = atoi(optarg);
 
@@ -152,6 +154,15 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       *D = value;
       break;
 
+    case 'w':
+      if (value != 0 && value != 1)
+      {
+        fprintf(stderr, "Error: unsupported distributed dynamic load balancing initialization\n");
+        exit(EXIT_FAILURE);
+      }
+      *w = value;
+      break;
+
     case 'p':
       if (value <= 0 || value > 100)
       {
@@ -162,13 +173,13 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       break;
 
     default:
-      fprintf(stderr, "Usage: %s --inst <value> --lb <value> --ub <value> --m <value> --M <value> --D <value> --perc <value>\n", argv[0]);
+      fprintf(stderr, "Usage: %s --inst <value> --lb <value> --ub <value> --m <value> --M <value> --D <value> --w <value> --perc <value>\n", argv[0]);
       exit(EXIT_FAILURE);
     }
   }
 }
 
-void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, const int numProcs)
+void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, const int w, const int numProcs)
 {
   printf("\n=================================================\n");
   printf("Distributed multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x %d GPUs)\n\n", numProcs, D);
@@ -199,14 +210,14 @@ void print_results(const int optimum, const unsigned long long int exploredTree,
   printf("=================================================\n");
 }
 
-void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, const int commSize, const int optimum,
+void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, const int w, const int commSize, const int optimum,
                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
                         unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
                         double *timeKernelCall, double *timeIdle, double *workloadProc)
 {
   FILE *file;
   file = fopen("distMultigpu_sharing.dat", "a");
-  fprintf(file, "\nProc[%d] GPU[%d] ta[%d] lb[%d] time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, D, inst, lb, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "\nProc[%d] WS[%d] GPU[%d] ta[%d] lb[%d] time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fprintf(file, "Workload per Proc: ");
   compute_boxplot_stats(workloadProc, commSize, file);
   fprintf(file, "Max Kernel Call Times per Proc: ");
@@ -224,7 +235,7 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
   fclose(file);
 
   file = fopen("distMultigpu_sharing_detail.dat", "a");
-  fprintf(file, "\nProc[%d] GPU[%d] ta%d lb%d time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, D, inst, lb, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "\nProc[%d] WS[%d] GPU[%d] ta%d lb%d time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fprintf(file, "Explored Nodes per Proc: ");
   for (int i = 0; i < commSize; i++)
   {
@@ -450,7 +461,7 @@ void generate_children(Node *parents, Node *children, const int size, const int 
 }
 
 // Distributed Multi-GPU PFSP search
-void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, double perc, int *best,
+void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const int w, double perc, int *best,
                  unsigned long long int *exploredTree, unsigned long long int *exploredSol, double *elapsedTime,
                  unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
                  double *timeKernelCall, double *timeIdle, double *workloadProc, int MPIRank, int commSize)
@@ -588,9 +599,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   }
   startTime = omp_get_wtime();
 
-#pragma omp parallel num_threads(D + 1) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag,  \
-                                                   pool_lloc, multiPool, jobs, machines, lbound1, lbound2, lb, m, M, D, perc, \
-                                                   best, exploredTree, exploredSol, global_termination_flag, poolSizes_all, timeDevice) // reduction(min:best_l)
+  int nbThreads = (w == 1) ? (D + 1) : D;
+
+#pragma omp parallel num_threads(nbThreads) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag,  \
+                                                       pool_lloc, multiPool, jobs, machines, lbound1, lbound2, lb, m, M, D, perc, \
+                                                       best, exploredTree, exploredSol, global_termination_flag, poolSizes_all, timeDevice) // reduction(min:best_l)
   // for (int gpuID = 0; gpuID < D; gpuID++)
   {
     double startSetDevice, endSetDevice, startKernelCall, endKernelCall, startTimeIdle, endTimeIdle;
@@ -600,7 +613,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // DEBUGGING
     // printf("From Proc[%d] Thread[%d] Started MPI+Threading\n", MPIRank, gpuID);
 
-    // WARNING: gpuID == D does not managed a GPU!!!
+    // WARNING: gpuID == D does not manage a GPU!!!
     if (gpuID != D)
     {
       startSetDevice = omp_get_wtime();
@@ -723,7 +736,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     {
       counter++;
       // Distributed Termination Flag reached, break from distributed multi-threaded environment
-      if (global_termination_flag)
+      if (global_termination_flag && w == 1)
       {
         // DEBUGGING
         // printf("From Proc[%d] Thread[%d] Global Termination Reached\n", MPIRank, gpuID);
@@ -731,7 +744,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       }
 
       // Work Sharing by Last Thread
-      if (gpuID == D)
+      if (gpuID == D && w == 1)
       {
         // Termination Detection of GPU-accelerated step
         termination_flag = 0;
@@ -986,8 +999,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             }
             if (allIdle(eachTaskState, D, &allTasksIdleFlag))
             {
-              continue;
-              // break;
+              if (w == 1)
+                continue;
+              else
+                break;
             }
             continue;
           }
@@ -1256,15 +1271,15 @@ int main(int argc, char *argv[])
 
   srand(time(NULL));
 
-  int inst, lb, ub, m, M, D;
+  int inst, lb, ub, m, M, D, w;
   double perc;
-  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &perc);
+  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &w, &perc);
 
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
 
   if (MPIRank == 0)
-    print_settings(inst, machines, jobs, ub, lb, D, commSize);
+    print_settings(inst, machines, jobs, ub, lb, D, w, commSize);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
   unsigned long long int exploredTree = 0;
@@ -1285,12 +1300,12 @@ int main(int argc, char *argv[])
     nStealsProc[i] = 0;
   }
 
-  pfsp_search(inst, lb, m, M, D, perc, &optimum, &exploredTree, &exploredSol, &elapsedTime, expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc, MPIRank, commSize);
+  pfsp_search(inst, lb, m, M, D, w, perc, &optimum, &exploredTree, &exploredSol, &elapsedTime, expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc, MPIRank, commSize);
 
   if (MPIRank == 0)
   {
     print_results(optimum, exploredTree, exploredSol, elapsedTime);
-    print_results_file(inst, machines, jobs, lb, D, commSize, optimum, exploredTree, exploredSol, elapsedTime, expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc);
+    print_results_file(inst, machines, jobs, lb, D, w, commSize, optimum, exploredTree, exploredSol, elapsedTime, expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc);
   }
 
   MPI_Finalize();
