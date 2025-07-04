@@ -58,7 +58,7 @@ $(LIBPATH)/%.o: $(LIBPATH)/%.cu
 
 # Build executable for sequential in C
 pfsp_c.out: pfsp_c.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_atom.o
-	$(C_COMPILER) $(C_COMMON_OPTS) $^ -o $@ -lm
+	$(C_COMPILER) $(C_COMMON_OPTS) $^ -o $@ -lm -lsqlite3
 
 # Build executable for single-GPU in C+CUDA
 pfsp_gpu_cuda.out: pfsp_gpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/evaluate.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/Pool_atom.o
