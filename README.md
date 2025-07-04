@@ -67,8 +67,10 @@ Problem-specific command-line options:
     - `1`: enable intra-node work stealing (default)
 
   - **`-w`**: Inter-node Dynamic Load Balancing in `pfsp_dist_multigpu_cuda.c`
-    - `0`: no inter-node load balancing
-    - `1`: enable inter-node work sharing (default)
+    - `0`: no inter-node load balancing (default)
+    - `1`: enable inter-node work sharing
+    - `2`: enable inter-node work stealing
+
 
   <!-- TODO: give references -->
   - **`-l`**: lower bound function

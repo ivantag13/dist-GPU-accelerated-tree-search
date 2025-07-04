@@ -217,7 +217,7 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
 {
   FILE *file;
   file = fopen("distMultigpu.dat", "a");
-  fprintf(file, "\nProc[%d] WS[%d] GPU[%d] ta[%d] lb[%d] time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "\nProc[%d] LB[%d] GPU[%d] ta[%d] lb[%d] time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fprintf(file, "Workload per Proc: ");
   compute_boxplot_stats(workloadProc, commSize, file);
   fprintf(file, "Max Kernel Call Times per Proc: ");
@@ -235,7 +235,7 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
   fclose(file);
 
   file = fopen("distMultigpu_detail.dat", "a");
-  fprintf(file, "\nProc[%d] WS[%d] GPU[%d] ta%d lb%d time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
+  fprintf(file, "\nProc[%d] LB[%d] GPU[%d] ta%d lb%d time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
   fprintf(file, "Explored Nodes per Proc: ");
   for (int i = 0; i < commSize; i++)
   {
