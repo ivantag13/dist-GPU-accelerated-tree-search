@@ -11,7 +11,6 @@
 #include <getopt.h>
 #include <time.h>
 #include <math.h>
-#include <sqlite3.h>
 
 #include "lib/c_bound_simple.h"
 #include "lib/c_bound_johnson.h"
@@ -113,82 +112,6 @@ void print_results(const int optimum, const unsigned long long int exploredTree,
   printf("Optimal makespan: %d\n", optimum);
   printf("Elapsed time: %.4f [s]\n", timer);
   printf("=================================================\n");
-}
-
-void print_file(const int inst, const int machines, const int jobs, const int lb, const int optimum,
-                const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer)
-{
-  sqlite3 *db;
-  sqlite3_stmt *stmt;
-  int rc;
-
-  // Open DB
-  rc = sqlite3_open("serial.db", &db);
-  if (rc)
-  {
-    fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
-    return;
-  }
-
-  // Create table if it doesn't exist
-  const char *create_sql =
-      "CREATE TABLE IF NOT EXISTS runs ("
-      "run_id INTEGER PRIMARY KEY AUTOINCREMENT,"
-      "instance_id INTEGER,"
-      "machines INTEGER,"
-      "jobs INTEGER,"
-      "lower_bound INTEGER,"
-      "optimum INTEGER,"
-      "explored_tree INTEGER,"
-      "explored_solutions INTEGER,"
-      "total_time REAL);";
-
-  rc = sqlite3_exec(db, create_sql, 0, 0, 0);
-  if (rc != SQLITE_OK)
-  {
-    fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
-    return;
-  }
-
-  // Prepare insert statement
-  const char *insert_sql =
-      "INSERT INTO runs (instance_id, machines, jobs, lower_bound, optimum, explored_tree, explored_solutions, total_time) "
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
-
-  rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL);
-  if (rc != SQLITE_OK)
-  {
-    fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
-    sqlite3_close(db);
-    return;
-  }
-
-  // Bind values
-  sqlite3_bind_int(stmt, 1, inst);
-  sqlite3_bind_int(stmt, 2, machines);
-  sqlite3_bind_int(stmt, 3, jobs);
-  sqlite3_bind_int(stmt, 4, lb);
-  sqlite3_bind_int(stmt, 5, optimum);
-  sqlite3_bind_int64(stmt, 6, exploredTree);
-  sqlite3_bind_int64(stmt, 7, exploredSol);
-  sqlite3_bind_double(stmt, 8, timer);
-
-  // Execute insert
-  rc = sqlite3_step(stmt);
-  if (rc != SQLITE_DONE)
-  {
-    fprintf(stderr, "Insert failed: %s\n", sqlite3_errmsg(db));
-  }
-
-  // Finalize and close
-  sqlite3_finalize(stmt);
-  sqlite3_close(db);
-
-  // FILE *file;
-  // file = fopen("gpu.dat", "a");
-  // fprintf(file, "ta%d lb%d Time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", inst, lb, timer, exploredTree, exploredSol, optimum);
-  // fclose(file);
-  return;
 }
 
 inline void swap(int *a, int *b)
