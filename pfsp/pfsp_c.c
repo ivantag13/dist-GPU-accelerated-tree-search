@@ -317,8 +317,6 @@ int main(int argc, char *argv[])
 
   pfsp_search(inst, lb, &optimum, &exploredTree, &exploredSol, &elapsedTime);
 
-  print_file(inst, machines, jobs, lb, optimum, exploredTree, exploredSol, elapsedTime);
-
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
   return 0;
