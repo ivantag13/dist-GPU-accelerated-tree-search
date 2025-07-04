@@ -28,7 +28,7 @@ In order to compile and execute the CUDA-based code on AMD GPU architectures, we
 
 ### Setting the environment configuration
 
-By default, in our makefile the target GPU architectures are set for two cluster environement, [Grid'5000](https://www.grid5000.fr/) and [LUMI](https://www.lumi-supercomputer.eu/).
+By default, in our makefile the target GPU architectures are set for two cluster environements, [Grid'5000](https://www.grid5000.fr/) and [LUMI](https://www.lumi-supercomputer.eu/).
 
 ### Compilation
 
@@ -62,9 +62,13 @@ Problem-specific command-line options:
   - **`-i`**: Taillard's instance to solve
     - any positive integer between `001` and `120` (`014` by default)
 
-  - **`-w`**: Intra-node Work Stealing
+  - **`-w`**: Intra-node Work Stealing in `pfsp_multigpu_cuda.c`
     - `0`: disable intra-node work stealing
     - `1`: enable intra-node work stealing (default)
+
+  - **`-w`**: Inter-node Dynamic Load Balancing in `pfsp_dist_multigpu_cuda.c`
+    - `0`: no inter-node load balancing
+    - `1`: enable inter-node work sharing (default)
 
   <!-- TODO: give references -->
   - **`-l`**: lower bound function
