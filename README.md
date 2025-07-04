@@ -35,6 +35,7 @@ By default, in our makefile the target GPU architectures are set for two cluster
 All the code is compiled using the provided makefile. When doing **`make`** the user can choose between three options. The first one is by adding no additional flags, which is convenient for a local compilation. Or by adding the flag **`SYSTEM`**. For instance:
 - **`make SYSTEM=g5k`**: set the compilation for the Grid'5000 system (AMD GPU architecture code set to `gfx906`)
 - **`make SYSTEM=lumi`**: set the compilation for the LUMI system (AMD GPU architecture code set to `gfx90a`)
+  - a bash file is available to load all concerning modules, run on terminal from this project root directory **`source config/lumi-module-load.sh`**
 
 The CUDA architecture code is always set to `sm_80`.
 
