@@ -7,6 +7,21 @@ extern "C"
 #include "PFSP_gpu_lib.cuh"
 #include "bounds_gpu.cu"
 
+// CUDA error checking
+#define gpuErrchk(ans)                          \
+  {                                             \
+    gpuAssert((ans), __FILE__, __LINE__, true); \
+  }
+  void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
+  {
+    if (code != cudaSuccess)
+    {
+      fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort)
+        exit(code);
+    }
+  }
+
   __device__ void swap_cuda(int *a, int *b)
   {
     int tmp = *b;

@@ -26,7 +26,7 @@ else ifeq ($(SYSTEM), lumi)
   AMD_GPU_ARCH := gfx90a
 endif
 
-C_COMMON_OPTS    := -O3 -Wall -g
+C_COMMON_OPTS    := -O3 -Wall -g -Wno-uninitialized
 CUDA_COMMON_OPTS := -O3 -arch=sm_80 # TODO: adapt SM automatically, if possible
 HIP_COMMON_OPTS  := $(C_COMMON_OPTS) --offload-arch=$(AMD_GPU_ARCH) -Wno-unused-result
 

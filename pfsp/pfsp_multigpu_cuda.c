@@ -19,30 +19,14 @@
 #include "lib/c_bound_simple.h"
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
-#include "lib/evaluate.h"
+#include "lib/PFSP_gpu_lib.cuh"
 #include "lib/PFSP_lib.h"
 #include "lib/Pool_atom.h"
 #include "../common/util.h"
 
 /******************************************************************************
-CUDA error checking
+Statistics functions
 *****************************************************************************/
-
-#define gpuErrchk(ans)                          \
-  {                                             \
-    gpuAssert((ans), __FILE__, __LINE__, true); \
-  }
-void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
-{
-  if (code != cudaSuccess)
-  {
-    fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-    if (abort)
-      exit(code);
-  }
-}
-
-// Statistics functions
 void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, int ws, const int optimum,
                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
                         unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildren,
@@ -313,58 +297,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // printf("GPU[%d] Time to redistribute pool: %f\n", gpuID, timePool);
 
     startCudaMalloc = omp_get_wtime();
-    // TODO: add function 'copyBoundsDevice' to perform the deep copy of bounding data
-    // Vectors for deep copy of lbound1 to device
+    // GPU bounding functions data
     lb1_bound_data lbound1_d;
-    int *p_times_d;
-    int *min_heads_d;
-    int *min_tails_d;
+    int *p_times_d, *min_heads_d, *min_tails_d;
+    lb1_alloc_gpu(&lbound1_d, lbound1, p_times_d, min_heads_d, min_tails_d, jobs, machines);
 
-    // Allocating and copying memory necessary for deep copy of lbound1
-    cudaMalloc((void **)&p_times_d, jobs * machines * sizeof(int));
-    cudaMalloc((void **)&min_heads_d, machines * sizeof(int));
-    cudaMalloc((void **)&min_tails_d, machines * sizeof(int));
-    cudaMemcpy(p_times_d, lbound1->p_times, jobs * machines * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(min_heads_d, lbound1->min_heads, machines * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(min_tails_d, lbound1->min_tails, machines * sizeof(int), cudaMemcpyHostToDevice);
-
-    // Deep copy of lbound1
-    lbound1_d.p_times = p_times_d;
-    lbound1_d.min_heads = min_heads_d;
-    lbound1_d.min_tails = min_tails_d;
-    lbound1_d.nb_jobs = lbound1->nb_jobs;
-    lbound1_d.nb_machines = lbound1->nb_machines;
-
-    // Vectors for deep copy of lbound2 to device
     lb2_bound_data lbound2_d;
-    int *johnson_schedule_d;
-    int *lags_d;
-    int *machine_pairs_1_d;
-    int *machine_pairs_2_d;
-    int *machine_pair_order_d;
-
-    // Allocating and copying memory necessary for deep copy of lbound2
-    int nb_mac_pairs = lbound2->nb_machine_pairs;
-    cudaMalloc((void **)&johnson_schedule_d, nb_mac_pairs * jobs * sizeof(int));
-    cudaMalloc((void **)&lags_d, nb_mac_pairs * jobs * sizeof(int));
-    cudaMalloc((void **)&machine_pairs_1_d, nb_mac_pairs * sizeof(int));
-    cudaMalloc((void **)&machine_pairs_2_d, nb_mac_pairs * sizeof(int));
-    cudaMalloc((void **)&machine_pair_order_d, nb_mac_pairs * sizeof(int));
-    cudaMemcpy(johnson_schedule_d, lbound2->johnson_schedules, nb_mac_pairs * jobs * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(lags_d, lbound2->lags, nb_mac_pairs * jobs * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(machine_pairs_1_d, lbound2->machine_pairs_1, nb_mac_pairs * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(machine_pairs_2_d, lbound2->machine_pairs_2, nb_mac_pairs * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(machine_pair_order_d, lbound2->machine_pair_order, nb_mac_pairs * sizeof(int), cudaMemcpyHostToDevice);
-
-    // Deep copy of lbound2
-    lbound2_d.johnson_schedules = johnson_schedule_d;
-    lbound2_d.lags = lags_d;
-    lbound2_d.machine_pairs_1 = machine_pairs_1_d;
-    lbound2_d.machine_pairs_2 = machine_pairs_2_d;
-    lbound2_d.machine_pair_order = machine_pair_order_d;
-    lbound2_d.nb_machine_pairs = lbound2->nb_machine_pairs;
-    lbound2_d.nb_jobs = lbound2->nb_jobs;
-    lbound2_d.nb_machines = lbound2->nb_machines;
+    int *johnson_schedule_d, *lags_d, *machine_pairs_1_d, *machine_pairs_2_d, *machine_pair_order_d;
+    lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));

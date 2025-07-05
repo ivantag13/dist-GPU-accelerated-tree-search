@@ -23,24 +23,6 @@
 #include "lib/Pool_atom.h"
 #include "../common/util.h"
 
-/******************************************************************************
-CUDA functions
-******************************************************************************/
-
-#define gpuErrchk(ans)                          \
-  {                                             \
-    gpuAssert((ans), __FILE__, __LINE__, true); \
-  }
-void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
-{
-  if (code != cudaSuccess)
-  {
-    fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-    if (abort)
-      exit(code);
-  }
-}
-
 // Number of machine‑pairs as a function of M
 //   P = M*(M‑1)/2
 static inline int P_of(int M)
@@ -113,8 +95,6 @@ void print_results_file(const int inst, const int machines, const int jobs, cons
 /*******************************************************************************
 Implementation of the parallel CUDA GPU PFSP search.
 *******************************************************************************/
-
-// Single-GPU PFSP search
 void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
                  unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
 {
@@ -142,7 +122,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   pushBack(&pool, root);
 
-  // Timer
+  // Timers
   struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
@@ -187,16 +167,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   */
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-
   clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMalloc);
 
-  // TODO: add function 'copyBoundsDevice' to perform the deep copy of bounding data
-  // Vectors for deep copy of lbound1 to device
+  // GPU bounding functions data
   lb1_bound_data lbound1_d;
   int *p_times_d, *min_heads_d, *min_tails_d;
   lb1_alloc_gpu(&lbound1_d, lbound1, p_times_d, min_heads_d, min_tails_d, jobs, machines);
 
-  // Vectors for deep copy of lbound2 to device
   lb2_bound_data lbound2_d;
   int *johnson_schedule_d, *lags_d, *machine_pairs_1_d, *machine_pairs_2_d, *machine_pair_order_d;
   lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
@@ -292,7 +269,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
         each task generates and inserts its children nodes to the pool.
       */
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
-      // generate_children(parents, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool);
       generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
       pushBackBulk(&pool, children, indexChildren);
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
