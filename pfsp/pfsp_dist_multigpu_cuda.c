@@ -835,7 +835,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   } // End of parallel region OpenMP
 
   MPI_Barrier(MPI_COMM_WORLD);
-  // printf("From Proc[%d] Left OMP region\n", MPIRank);
 
   /*******************************
   Gathering statistics
@@ -848,10 +847,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   double maxIdleTime = get_max(timeIdleDevice, D);
   unsigned long long int mySteals = nStealsProc[MPIRank];
   t2Temp -= maxDevice;
-
-  // for (int i = 0; i < D; i++)
-  //   printf("Proc[%d] timeLocalKernelCall[%d] = %f\n", MPIRank, i, timeLocalKernelCall[i]);
-
   MPI_Reduce(&t2Temp, &t2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
   // GPU
@@ -866,13 +861,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   unsigned long long int midExploredTree = 0, midExploredSol = 0;
   MPI_Reduce(&eachLocaleExploredTree, &midExploredTree, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
   MPI_Reduce(&eachLocaleExploredSol, &midExploredSol, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&eachLocaleBest, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
 
-  if (MPIRank == 0)
-  {
-    *exploredTree += midExploredTree;
-    *exploredSol += midExploredSol;
-  }
+  // TODO : fix this (it should be an All_reduce I suppose)
+  MPI_Reduce(&eachLocaleBest, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
 
   // Gather data from all processes for printing GPU workload statistics
   unsigned long long int *allExploredTrees = NULL;
@@ -883,6 +874,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   double *allMaxIdleDevice = NULL;
   if (MPIRank == 0)
   {
+    *exploredTree += midExploredTree;
+    *exploredSol += midExploredSol;
     allExploredTrees = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
     allExploredSols = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
     allEachExploredTrees = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
@@ -893,7 +886,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   MPI_Gather(&eachLocaleExploredTree, 1, MPI_UNSIGNED_LONG_LONG, allExploredTrees, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
   MPI_Gather(&eachLocaleExploredSol, 1, MPI_UNSIGNED_LONG_LONG, allExploredSols, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
-
   // Gather eachExploredTree array from all processes
   MPI_Gather(eachExploredTree, D, MPI_UNSIGNED_LONG_LONG, allEachExploredTrees, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
 
@@ -941,72 +933,32 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     }
   }
 
-  // Gathering remaining nodes
-  int *recvcounts = NULL;
-  int *displs = NULL;
-  int totalSize = 0;
-
-  if (MPIRank == 0)
-  {
-    recvcounts = (int *)malloc(commSize * sizeof(int));
-    displs = (int *)malloc(commSize * sizeof(int));
-  }
-
-  MPI_Gather(&pool_lloc.size, 1, MPI_INT, recvcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-  if (MPIRank == 0)
-  {
-    displs[0] = 0;
-    for (int i = 0; i < commSize; i++)
-    {
-      totalSize += recvcounts[i];
-      if (i > 0)
-      {
-        displs[i] = displs[i - 1] + recvcounts[i - 1];
-      }
-    }
-  }
-
-  // Master process receiving data from Gather operation
-  Node *masterNodes = NULL;
-  if (MPIRank == 0)
-  {
-    masterNodes = (Node *)malloc(totalSize * sizeof(Node));
-  }
-
-  MPI_Gatherv(pool_lloc.elements, pool_lloc.size, myNode,
-              masterNodes, recvcounts, displs, myNode, 0, MPI_COMM_WORLD);
-
-  if (MPIRank == 0)
-  {
-    for (int i = 0; i < totalSize; i++)
-      pushBack(&pool, masterNodes[i]);
-  }
-
-  // DEBUGGING
-  // printf("From Proc[%d] Before Step 3\n", MPIRank);
-
   /*
-    Step 3: We complete the depth-first search on CPU.
+    Step 3: Remaining nodes evaluated in DFS on CPU by each MPI process.
   */
-  double t3;
-  if (MPIRank == 0)
+  unsigned long long int finalLocaleExpTree = 0, finalLocaleExpSol = 0;
+  startTime = omp_get_wtime();
+  while (1)
   {
-    // int count = 0;
-    startTime = omp_get_wtime();
-    while (1)
-    {
-      int hasWork = 0;
-      Node parent = popBack(&pool, &hasWork);
-      if (!hasWork)
-        break;
-      decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, &pool);
-      // count++;
-    }
-    endTime = omp_get_wtime();
-    t3 = endTime - startTime;
-    *elapsedTime = t1 + t2 + t3;
+    int hasWork = 0;
+    Node parent = popBack(&pool_lloc, &hasWork);
+    if (!hasWork)
+      break;
+    decompose(jobs, lb, best, lbound1, lbound2, parent, &finalLocaleExpTree, &finalLocaleExpSol, &pool_lloc);
   }
+  endTime = omp_get_wtime();
+  double t3, t3Temp = endTime - startTime;
+
+  MPI_Reduce(&t3Temp, &t3, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+  unsigned long long int masterFinalLocaleExpTree = 0, masterFinalLocaleExpSol = 0;
+  MPI_Reduce(&finalLocaleExpTree, &masterFinalLocaleExpTree, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&finalLocaleExpSol, &masterFinalLocaleExpSol, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+  // TODO : Fix this one also
+  // MPI_Reduce(&eachLocaleBest, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+  *elapsedTime = t1 + t2 + t3;
+
   // freeing memory for structs common to all MPI processes
   deleteSinglePool_atom(&pool);
   deleteSinglePool_atom(&pool_lloc);
@@ -1015,15 +967,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   if (MPIRank == 0)
   {
-    free(recvcounts);
-    free(displs);
-    free(masterNodes);
+    *exploredTree += masterFinalLocaleExpTree;
+    *exploredSol += masterFinalLocaleExpSol;
 
     printf("\nSearch on CPU completed\n");
     printf("Size of the explored tree: %llu\n", *exploredTree);
     printf("Number of explored solutions: %llu\n", *exploredSol);
     printf("Elapsed time: %f [s]\n", t3);
-
     printf("\nExploration terminated.\n");
   }
 
@@ -1060,13 +1010,9 @@ int main(int argc, char *argv[])
     print_settings(inst, machines, jobs, ub, lb, D, ws, commSize, LB, version);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
-  unsigned long long int exploredTree = 0;
-  unsigned long long int exploredSol = 0;
 
-  double elapsedTime;
-
-  unsigned long long int expTreeProc[commSize], expSolProc[commSize], nStealsProc[commSize];
-  double timeKernelCall[commSize], timeIdle[commSize], workloadProc[commSize];
+  unsigned long long int exploredTree = 0, exploredSol = 0, expTreeProc[commSize], expSolProc[commSize], nStealsProc[commSize];
+  double elapsedTime, timeKernelCall[commSize], timeIdle[commSize], workloadProc[commSize];
 
   for (int i = 0; i < commSize; i++)
   {
