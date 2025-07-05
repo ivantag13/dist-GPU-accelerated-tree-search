@@ -253,7 +253,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   int opt, value;
   int option_index = 0;
 
-  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:w:p:", long_options, &option_index)) != -1)
+  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:w:L:p:", long_options, &option_index)) != -1)
   {
     value = atoi(optarg);
 
