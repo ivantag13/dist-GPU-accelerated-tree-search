@@ -8,6 +8,9 @@ extern "C"
 
 #include <stdlib.h>
 #include <stdint.h>
+#include "c_bound_simple.h"	 // For structs definitions
+#include "c_bound_johnson.h" // For structs definitions
+
 
 #define BLOCK_SIZE 512
 
