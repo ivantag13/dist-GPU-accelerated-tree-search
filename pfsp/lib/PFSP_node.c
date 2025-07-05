@@ -12,3 +12,11 @@ void initRoot(Node* root, const int jobs)
     root->prmu[i] = i;
   }
 }
+
+// Function for sorting nodes
+int compare_nodes(const void *a, const void *b)
+{
+  Node *nodeA = (Node *)a;
+  Node *nodeB = (Node *)b;
+  return nodeA->limit1 - nodeB->limit1;
+}

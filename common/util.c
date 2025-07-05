@@ -1,4 +1,12 @@
-#include "Auxiliary.h"
+#include "util.h"
+
+// Function that performs a swap between two integers
+inline void swap(int *a, int *b)
+{
+  int tmp = *b;
+  *b = *a;
+  *a = tmp;
+}
 
 // Function to check if all elements in an array of atomic bool are IDLE
 static bool _allIdle(_Atomic bool arr[], int size)
@@ -131,29 +139,35 @@ double get_quartile(const double *sorted, int size, double percentile)
   return sorted[lower] + delta * (sorted[lower + 1] - sorted[lower]);
 }
 
-void get_quartiles_tukey(const double* sorted, int size, double* q1, double* q3) {
+void get_quartiles_tukey(const double *sorted, int size, double *q1, double *q3)
+{
   int mid = size / 2;
 
-  if (size % 2 == 0) {
-      // Even: lower half = [0 .. mid-1], upper half = [mid .. size-1]
-      *q1 = get_median(sorted, mid);
-      *q3 = get_median(sorted + mid, mid);
-  } else {
-      // Odd: lower half = [0 .. mid-1], upper half = [mid+1 .. size-1]
-      *q1 = get_median(sorted, mid);
-      *q3 = get_median(sorted + mid + 1, mid);
+  if (size % 2 == 0)
+  {
+    // Even: lower half = [0 .. mid-1], upper half = [mid .. size-1]
+    *q1 = get_median(sorted, mid);
+    *q3 = get_median(sorted + mid, mid);
+  }
+  else
+  {
+    // Odd: lower half = [0 .. mid-1], upper half = [mid+1 .. size-1]
+    *q1 = get_median(sorted, mid);
+    *q3 = get_median(sorted + mid + 1, mid);
   }
 }
 
-double get_percentile(const double *sorted, int n, double pct) {
-  if (n < 1) return 0.0;
+double get_percentile(const double *sorted, int n, double pct)
+{
+  if (n < 1)
+    return 0.0;
   double idx = pct * (n - 1);
   int lo = (int)floor(idx);
   double frac = idx - lo;
   if (lo + 1 < n)
-      return sorted[lo] + frac * (sorted[lo+1] - sorted[lo]);
+    return sorted[lo] + frac * (sorted[lo + 1] - sorted[lo]);
   else
-      return sorted[lo];
+    return sorted[lo];
 }
 
 double get_stddev(const double *vec, int size)
@@ -171,7 +185,8 @@ void compute_boxplot_stats(const double *vec, int size, FILE *file)
 {
   double *sorted = malloc(size * sizeof(double));
   double mean = 0;
-  for (int i = 0; i < size; i++){
+  for (int i = 0; i < size; i++)
+  {
     sorted[i] = vec[i];
     mean += vec[i];
   }
@@ -183,8 +198,8 @@ void compute_boxplot_stats(const double *vec, int size, FILE *file)
   double max = sorted[size - 1];
   double median = get_median(sorted, size);
   get_quartiles_tukey(sorted, size, &q1, &q3);
-  //double q1 = get_percentile(sorted, size, 0.25);
-  //double q3 = get_percentile(sorted, size, 0.75);
+  // double q1 = get_percentile(sorted, size, 0.25);
+  // double q3 = get_percentile(sorted, size, 0.75);
   double stddev = get_stddev(vec, size);
 
   fprintf(file, "Min: %.3f  Q1: %.3f  Median: %.3f  Mean: %.3f  Q3: %.3f  Max: %.3f  StdDev: %.3f\n",

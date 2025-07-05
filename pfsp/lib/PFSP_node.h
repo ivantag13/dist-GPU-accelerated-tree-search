@@ -2,7 +2,8 @@
 #define PFSP_NODE_H
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 #include <stdlib.h>
@@ -13,14 +14,16 @@ extern "C" {
 #define MAX_JOBS 20
 #define MAX_MACHINES 20
 
-typedef struct
-{
-  uint8_t depth;
-  int limit1;
-  int prmu[MAX_JOBS];
-} Node;
+    typedef struct
+    {
+        uint8_t depth;
+        int limit1;
+        int prmu[MAX_JOBS];
+    } Node;
 
-void initRoot (Node *root, const int jobs);
+    void initRoot(Node *root, const int jobs);
+
+    int compare_nodes(const void *a, const void *b);
 
 #ifdef __cplusplus
 }
