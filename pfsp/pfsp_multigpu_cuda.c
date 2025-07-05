@@ -237,28 +237,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   unsigned long long int eachExploredTree[D], eachExploredSol[D];
   int eachBest[D];
+  double timeDevice[D];
 
-  const int poolSize = pool.size;
-  const int c = poolSize / D;
-  const int l = poolSize - (D - 1) * c;
-  const int f = pool.front;
-
-  pool.front = 0;
-  pool.size = 0;
   SinglePool_atom multiPool[D];
   for (int i = 0; i < D; i++)
     initSinglePool_atom(&multiPool[i]);
 
   startTime = omp_get_wtime();
 
-  double timeDevice[D];
-
 // TODO: implement reduction using omp directives
 #pragma omp parallel num_threads(D) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag, pool, multiPool,                 \
                                                jobs, machines, lbound1, lbound2, lb, m, M, D, perc, ws, best, exploredTree, exploredSol,                  \
                                                elapsedTime, expTreeGPU, expSolGPU, genChildren, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, \
                                                timeCudaMalloc, timeKernelCall, timeIdle, timeTermination, timeDevice)
-  // for (int gpuID = 0; gpuID < D; gpuID++)
   {
     double startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startTimePoolOps, endTimePoolOps,
         startTimeIdle, endTimeIdle, startTermination, endTermination, startGenChildren, endGenChildren, startSetDevice, endSetDevice;
@@ -278,23 +269,28 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int best_l = *best;
     bool taskState = BUSY;
 
-    // each task gets its chunk
-    for (int i = 0; i < c; i++)
-    {
-      pool_loc->elements[i] = pool.elements[gpuID + f + i * D];
-    }
-    pool_loc->size += c;
-    if (gpuID == D - 1)
-    {
-      for (int i = c; i < l; i++)
-      {
-        pool_loc->elements[i] = pool.elements[(D * c) + f + i - c];
-      }
-      pool_loc->size += l - c;
-    }
-    // endPool = omp_get_wtime();
-    // double timePool = endPool - startPool;
-    // printf("GPU[%d] Time to redistribute pool: %f\n", gpuID, timePool);
+    // const int poolSize = pool.size;
+    // const int c = poolSize / D;
+    // const int l = poolSize - (D - 1) * c;
+    // const int f = pool.front;
+
+    // // each task gets its chunk
+    // for (int i = 0; i < c; i++)
+    // {
+    //   pool_loc->elements[i] = pool.elements[gpuID + f + i * D];
+    // }
+    // pool_loc->size += c;
+    // if (gpuID == D - 1)
+    // {
+    //   for (int i = c; i < l; i++)
+    //   {
+    //     pool_loc->elements[i] = pool.elements[(D * c) + f + i - c];
+    //   }
+    //   pool_loc->size += l - c;
+    // }
+    roundRobin_distribution(pool_loc, &pool, gpuID, D);
+    pool.front = 0;
+    pool.size = 0;
 
     startCudaMalloc = omp_get_wtime();
     // GPU bounding functions data

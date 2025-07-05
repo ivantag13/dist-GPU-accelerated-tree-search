@@ -1,10 +1,11 @@
 #ifndef POOL_ATOM_H
 #define POOL_ATOM_H
 
-#define MIN(a,b) (((a)<(b))?(a):(b))
+//#define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 #include "PFSP_node.h"
@@ -13,49 +14,51 @@ extern "C" {
 #include <stdlib.h>
 #include <math.h>
 
-/*******************************************************************************
-Extension of the "Pool" data structure ensuring parallel-safety and supporting
-bulk operations.
-*******************************************************************************/
+  /*******************************************************************************
+  Extension of the "Pool" data structure ensuring parallel-safety and supporting
+  bulk operations.
+  *******************************************************************************/
 
 #define INITIAL_CAPACITY 1024
 
-typedef struct
-{
-  Node* elements;
-  int capacity;
-  int front;
-  int size;
-  _Atomic bool lock;
-} SinglePool_atom;
+  typedef struct
+  {
+    Node *elements;
+    int capacity;
+    int front;
+    int size;
+    _Atomic bool lock;
+  } SinglePool_atom;
 
-void initSinglePool_atom(SinglePool_atom* pool);
+  void initSinglePool_atom(SinglePool_atom *pool);
 
-void pushBack(SinglePool_atom* pool, Node node);
+  void roundRobin_distribution(SinglePool_atom *pool, SinglePool_atom *pool_source, int poolID, int step);
 
-void pushBackFree(SinglePool_atom *pool, Node node);
+  void pushBack(SinglePool_atom *pool, Node node);
 
-void pushBackBulk(SinglePool_atom* pool, Node* nodes, int size);
+  void pushBackFree(SinglePool_atom *pool, Node node);
 
-void pushBackBulkFree(SinglePool_atom *pool, Node *nodes, int size);
+  void pushBackBulk(SinglePool_atom *pool, Node *nodes, int size);
 
-Node popBack(SinglePool_atom* pool, int* hasWork);
+  void pushBackBulkFree(SinglePool_atom *pool, Node *nodes, int size);
 
-Node popBackFree(SinglePool_atom* pool, int* hasWork);
+  Node popBack(SinglePool_atom *pool, int *hasWork);
 
-int popBackBulk(SinglePool_atom* pool, const int m, const int M, Node* parents);
+  Node popBackFree(SinglePool_atom *pool, int *hasWork);
 
-Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half);
+  int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents);
 
-Node* popBackBulkFree(SinglePool_atom* pool, const int m, const int M, int* poolSize);
+  Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half);
 
-Node popFrontFree(SinglePool_atom* pool, int* hasWork);
+  Node *popBackBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize);
 
-Node* popFrontBulkFree(SinglePool_atom* pool, const int m, const int M, int* poolSize, double perc);
+  Node popFrontFree(SinglePool_atom *pool, int *hasWork);
 
-//Node* popHalfFrontHalfBackBulkFree(SinglePool_atom* pool, const int m, const int M, int* poolSize);
+  Node *popFrontBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize, double perc);
 
-void deleteSinglePool_atom(SinglePool_atom* pool);
+  // Node* popHalfFrontHalfBackBulkFree(SinglePool_atom* pool, const int m, const int M, int* poolSize);
+
+  void deleteSinglePool_atom(SinglePool_atom *pool);
 
 #ifdef __cplusplus
 }

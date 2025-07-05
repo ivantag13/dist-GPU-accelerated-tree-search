@@ -9,6 +9,30 @@ void initSinglePool_atom(SinglePool_atom *pool)
   atomic_store(&(pool->lock), false);
 }
 
+void roundRobin_distribution(SinglePool_atom *pool, SinglePool_atom *pool_source, int poolID, int step)
+{
+  const int poolSize = pool_source->size;
+  const int c = poolSize / step;
+  const int l = poolSize - (step - 1) * c;
+  const int f = pool_source->front;
+
+  // each task gets its chunk
+  for (int i = 0; i < c; i++)
+  {
+    pool->elements[i] = pool_source->elements[poolID + f + i * step];
+  }
+  pool->size += c;
+  if (poolID == step - 1)
+  {
+    for (int i = c; i < l; i++)
+    {
+      pool->elements[i] = pool_source->elements[(step * c) + f + i - c];
+    }
+    pool->size += l - c;
+  }
+  return;
+}
+
 // Parallel-safe insertion to the end of the deque.
 void pushBack(SinglePool_atom *pool, Node node)
 {
