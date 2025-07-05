@@ -8,19 +8,20 @@ extern "C"
 #include "bounds_gpu.cu"
 
 // CUDA error checking
-#define gpuErrchk(ans)                          \
-  {                                             \
-    gpuAssert((ans), __FILE__, __LINE__, true); \
-  }
-  void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
-  {
-    if (code != cudaSuccess)
-    {
-      fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-      if (abort)
-        exit(code);
-    }
-  }
+// TODO: fix portability for variable cudaError_t (https://rocm.docs.amd.com/projects/HIP/en/docs-develop/how-to/hip_porting_guide.html)
+// #define gpuErrchk(ans)                          \
+//   {                                             \
+//     gpuAssert((ans), __FILE__, __LINE__, true); \
+//   }
+//   void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
+//   {
+//     if (code != cudaSuccess)
+//     {
+//       fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+//       if (abort)
+//         exit(code);
+//     }
+//   }
 
   __device__ void swap_cuda(int *a, int *b)
   {
