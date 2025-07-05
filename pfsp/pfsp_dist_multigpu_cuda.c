@@ -233,7 +233,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 #pragma omp parallel num_threads(nbThreads) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag,  \
                                                        pool_lloc, multiPool, jobs, machines, lbound1, lbound2, lb, m, M, D, perc, \
                                                        best, exploredTree, exploredSol, global_termination_flag, poolSizes_all, timeDevice) // reduction(min:best_l)
-  // for (int gpuID = 0; gpuID < D; gpuID++)
   {
     double startSetDevice, endSetDevice, startKernelCall, endKernelCall, startTimeIdle, endTimeIdle;
     int nSteal = 0, nSSteal = 0;
@@ -663,7 +662,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           // numBounds is the 'size' of the problem
           startKernelCall = omp_get_wtime();
           evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
-          // evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
           cudaDeviceSynchronize();
           endKernelCall = omp_get_wtime();
           timeLocalKernelCall[gpuID] += endKernelCall - startKernelCall;
@@ -672,7 +670,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           /*
             Each task generates and inserts its children nodes to the pool.
           */
-          // generate_children(parents, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc);
           generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
           pushBackBulk(pool_loc, children, indexChildren);
         }
@@ -805,8 +802,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     cudaFree(machine_pair_order_d);
     free(parents);
     free(bounds);
-
-    // printf("From Proc[%d] Thread[%d] OMP Critical reached\n", MPIRank, gpuID);
 
 #pragma omp critical
     {
