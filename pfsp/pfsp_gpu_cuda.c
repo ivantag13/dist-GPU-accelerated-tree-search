@@ -23,6 +23,10 @@
 #include "lib/Pool_atom.h"
 #include "../common/util.h"
 
+/*******************************************************************************
+FLOP estimation
+*******************************************************************************/
+// TODO: Fix FLOP estimations or use appropriate tool to measure it
 // Number of machine‑pairs as a function of M
 //   P = M*(M‑1)/2
 static inline int P_of(int M)
@@ -81,7 +85,9 @@ static inline int bytes_per_inv_lb2(int N, int M, int lim)
   return 4 * (loads + stores);
 }
 
-// Statistics functions
+/*******************************************************************************
+Statistics Functions
+*******************************************************************************/
 void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int optimum,
                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
 {
