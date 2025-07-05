@@ -26,7 +26,7 @@
 #include "../common/util.h"
 
 /******************************************************************************
-Create new MPI data type
+Create Node MPI data type
 ******************************************************************************/
 
 void create_mpi_node_type(MPI_Datatype *mpi_node_type)
@@ -187,14 +187,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     is not enough work.
   */
 
-  const int poolSize = pool.size;
-  const int c = poolSize / commSize;
-  const int l = poolSize - (commSize - 1) * c;
-  const int f = pool.front;
-
-  pool.front = 0;
-  pool.size = 0;
-
   // For every MPI process
   unsigned long long int eachLocaleExploredTree = 0, eachLocaleExploredSol = 0;
   int eachLocaleBest = *best;
@@ -207,28 +199,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   initSinglePool_atom(&pool_lloc);
 
   // each MPI process gets its chunk
-  for (int i = 0; i < c; i++)
-  {
-    pool_lloc.elements[i] = pool.elements[MPIRank + f + i * commSize];
-  }
-  pool_lloc.size += c;
-  if (MPIRank == commSize - 1)
-  {
-    for (int i = c; i < l; i++)
-    {
-      pool_lloc.elements[i] = pool.elements[(commSize * c) + f + i - c];
-    }
-    pool_lloc.size += l - c;
-  }
-
-  // Variables for GPUs under each MPI process
-  const int poolSize_l = pool_lloc.size;
-  const int c_l = poolSize_l / D;
-  const int l_l = poolSize_l - (D - 1) * c_l;
-  const int f_l = pool_lloc.front;
-
-  pool_lloc.front = 0;
-  pool_lloc.size = 0;
+  roundRobin_distribution(&pool_lloc, &pool, MPIRank, commSize);
+  pool.front = 0;
+  pool.size = 0;
 
   SinglePool_atom multiPool[D];
   for (int i = 0; i < D; i++)
@@ -287,23 +260,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     bool taskState = BUSY;
     bool expected = false;
 
+    // Each shared memory pool gets its chunk
     if (gpuID != D)
-    {
-      // each task gets its chunk
-      for (int i = 0; i < c_l; i++)
-      {
-        pool_loc->elements[i] = pool_lloc.elements[gpuID + f_l + i * D];
-      }
-      pool_loc->size += c_l;
-      if (gpuID == D - 1)
-      {
-        for (int i = c_l; i < l_l; i++)
-        {
-          pool_loc->elements[i] = pool_lloc.elements[(D * c_l) + f_l + i - c_l];
-        }
-        pool_loc->size += l_l - c_l;
-      }
-    }
+      roundRobin_distribution(pool_loc, &pool_lloc, gpuID, D);
+#pragma omp barrier
+    pool_lloc.front = 0;
+    pool_lloc.size = 0;
+
     // GPU bounding functions data
     lb1_bound_data lbound1_d;
     int *p_times_d, *min_heads_d, *min_tails_d;

@@ -269,26 +269,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int best_l = *best;
     bool taskState = BUSY;
 
-    // const int poolSize = pool.size;
-    // const int c = poolSize / D;
-    // const int l = poolSize - (D - 1) * c;
-    // const int f = pool.front;
-
-    // // each task gets its chunk
-    // for (int i = 0; i < c; i++)
-    // {
-    //   pool_loc->elements[i] = pool.elements[gpuID + f + i * D];
-    // }
-    // pool_loc->size += c;
-    // if (gpuID == D - 1)
-    // {
-    //   for (int i = c; i < l; i++)
-    //   {
-    //     pool_loc->elements[i] = pool.elements[(D * c) + f + i - c];
-    //   }
-    //   pool_loc->size += l - c;
-    // }
     roundRobin_distribution(pool_loc, &pool, gpuID, D);
+#pragma omp barrier
     pool.front = 0;
     pool.size = 0;
 

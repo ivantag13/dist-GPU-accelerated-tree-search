@@ -6,9 +6,7 @@ extern "C"
 {
 #endif
 
-#include "PFSP_node.h" // For Nodes definition
-					   // #include "c_bound_simple.h"	 // For structs definitions
-					   // #include "c_bound_johnson.h" // For structs definitions
+#include "PFSP_node.h"
 
 	// void gpuAssert(cudaError_t code, const char *file, int line, bool abort);
 

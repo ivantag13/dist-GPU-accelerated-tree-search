@@ -1,8 +1,6 @@
 #ifndef POOL_ATOM_H
 #define POOL_ATOM_H
 
-//#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-
 #ifdef __cplusplus
 extern "C"
 {
