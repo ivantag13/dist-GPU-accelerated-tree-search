@@ -344,7 +344,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
 
-  printf("Times: Total[%f] cudaMemCpy[%f] cudaMalloc[%f] kernelCall[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall);
+  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall);
 
   printf("\nExploration terminated.\n");
 }

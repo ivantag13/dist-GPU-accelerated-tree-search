@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15828954.svg)](https://doi.org/10.5281/zenodo.15828954)
+
 # Distributed GPU-accelerated tree search
 
 This repository contains the implementation of a GPU-accelerated Branch-and-Bound algorithm in C language.
