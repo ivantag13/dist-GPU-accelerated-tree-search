@@ -22,6 +22,7 @@
 #include "lib/PFSP_lib.h"
 #include "lib/Pool_atom.h"
 #include "../common/util.h"
+#include "../common/gpu_util.h"
 
 /*******************************************************************************
 FLOP estimation
@@ -104,16 +105,7 @@ Implementation of the parallel CUDA GPU PFSP search.
 void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
                  unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
 {
-
-  struct cudaDeviceProp prop;
-  int dev = 0;
-  cudaGetDevice(&dev);
-  cudaGetDeviceProperties(&prop, dev);
-  printf("Device name:          %s\n", prop.name);
-  printf("SM count:             %d\n", prop.multiProcessorCount);
-  // printf("CUDA cores/SM (est):  %d\n", e.g. 64);
-  printf("Clock rate (kHz):     %d\n", prop.clockRate);
-  // printf("Memory bandwidth (GB/s): ~%.1f\n",look up or use prop.memoryClockRate & busWidth );
+  gpu_info();
 
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
@@ -216,12 +208,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   while (1)
   {
     // int poolSize = pool.size;
+    // TODO : fix call of popBackBulkFree to use it here
     int poolSize = popBackBulk(&pool, m, M, parents);
 
     if (poolSize > 0)
     {
-      // qsort(parents, poolSize, sizeof(Node), compare_nodes);
-
       clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       int sum = 0;
       int diff;
@@ -244,12 +235,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
         totalFlops += (jobs - lim) * F;
         totalBytes += (jobs - lim) * per_inv;
       }
-      // if (counter == 0)
-      // {
-      //   for (i = 0; i < sum; i++)
-      //     printf("nodeIndex[%d] = %d\n", i, nodeIndex[i]);
-      // }
-
       const int numBounds = sum;
       const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
 
@@ -276,7 +261,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       */
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
       generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
-      pushBackBulk(&pool, children, indexChildren);
+      pushBackBulkFree(&pool, children, indexChildren);
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
       timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
 
@@ -308,7 +293,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBack(&pool, &hasWork);
+    Node parent = popBackFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -343,9 +328,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
-
   printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall);
-
   printf("\nExploration terminated.\n");
 }
 
