@@ -19,10 +19,10 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/PFSP_gpu_lib.cuh"
+#include "../common/gpu_util.cuh"
 #include "lib/PFSP_lib.h"
 #include "lib/Pool_atom.h"
 #include "../common/util.h"
-#include "../common/gpu_util.cuh"
 
 /*******************************************************************************
 FLOP estimation

@@ -1,4 +1,6 @@
 #include "gpu_util.cuh"
+#include <cuda.h>
+#include <cuda_runtime.h>
 
 __host__ void gpu_info()
 {
