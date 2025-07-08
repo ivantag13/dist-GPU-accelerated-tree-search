@@ -118,4 +118,4 @@ pfsp_dist_multigpu_hip.out: pfsp_dist_multigpu_hip.o $(LIBPATH)/c_taillard.o $(L
 .PHONY: clean
 
 clean:
-	rm -f *.out *.o *.hip $(LIBPATH)/*.o $(LIBCOMMON)/*.o $(LIBPATH)/*.hip
+	rm -f *.out *.o *.hip $(LIBPATH)/*.o $(LIBCOMMON)/*.o $(LIBPATH)/*.hip $(LIBCOMMON)/*.hip
