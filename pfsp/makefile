@@ -60,12 +60,16 @@ $(LIBCOMMON)/%.o: $(LIBCOMMON)/%.c
 $(LIBPATH)/%.o: $(LIBPATH)/%.cu
 	$(CUDA_COMPILER) $(CUDA_COMMON_OPTS) -c $< -o $@
 
+$(LIBCOMMON)/%.o: $(LIBCOMMON)/%.cu
+	$(CUDA_COMPILER) $(CUDA_COMMON_OPTS) -c $< -o $@
+
+
 # Build executable for sequential in C
-pfsp_c.out: pfsp_c.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBCOMMON)/gpu_util.o
+pfsp_c.out: pfsp_c.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o
 	$(C_COMPILER) $(C_COMMON_OPTS) $^ -o $@ -lm
 
 # Build executable for single-GPU in C+CUDA
-pfsp_gpu_cuda.out: pfsp_gpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib.o
+pfsp_gpu_cuda.out: pfsp_gpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/gpu_util.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib.o
 	$(C_COMPILER) $(C_COMMON_OPTS) $^ -o $@ -lm -lcudart $(CUDA_INCLUDE) $(CUDA_LIB)
 
 # Build executable for multi-GPU in C+OpenMP+CUDA
@@ -80,7 +84,7 @@ $(LIBPATH)/PFSP_gpu_lib_hip.o: $(LIBPATH)/PFSP_gpu_lib.cu
 	hipify-perl $< > $<.hip
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -c $<.hip -o $@
 
-$(LIBCOMMON)/gpu_util_hip.o: $(LIBCOMMON)/gpu_util.c
+$(LIBCOMMON)/gpu_util_hip.o: $(LIBCOMMON)/gpu_util.cu
 	hipify-perl $< > $<.hip
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -c $<.hip -o $@
 

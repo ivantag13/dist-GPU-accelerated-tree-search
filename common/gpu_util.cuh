@@ -14,7 +14,7 @@ extern "C"
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-    void gpu_info();
+    __host__ void gpu_info();
 
 #ifdef __cplusplus
 }

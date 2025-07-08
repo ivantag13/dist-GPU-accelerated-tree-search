@@ -22,7 +22,7 @@
 #include "lib/PFSP_lib.h"
 #include "lib/Pool_atom.h"
 #include "../common/util.h"
-#include "../common/gpu_util.h"
+#include "../common/gpu_util.cuh"
 
 /*******************************************************************************
 FLOP estimation

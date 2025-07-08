@@ -1,6 +1,6 @@
 #include "gpu_util.cuh"
 
-inline void gpu_info()
+__host__ void gpu_info()
 {
     struct cudaDeviceProp prop;
     int dev = 0;
