@@ -13,15 +13,17 @@ MAX_SIZE=50000
 REPETITIONS=3
 JOBS=0
 MACHINES=0
+LEVEL=1
 
 # === Parse command-line options ===
-while getopts ":m:M:r:j:g:" opt; do
+while getopts ":m:M:r:j:g:l:" opt; do
   case $opt in
     m) MIN_SIZE=$OPTARG ;;
     M) MAX_SIZE=$OPTARG ;;
     p) REPETITIONS=$OPTARG ;;
     j) JOBS=$OPTARG ;;
     g) MACHINES=$OPTARG ;;
+    l) LEVEL=$OPTARG ;;
     \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
     :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
   esac
@@ -76,12 +78,10 @@ echo "Repetitions per instance: $REPETITIONS"
 echo "Min size (m): $MIN_SIZE, Max size (M): $MAX_SIZE"
 echo "------------------------------------------"
 
-LEVEL=2
-
 for k in $INSTANCES; do
   for ((i=1; i<=REPETITIONS; i++)); do
     echo "Running instance $k (rep $i)"
-    srun ./pfsp_gpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE"
+    srun ./../pfsp_gpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE"
   done
 done
 

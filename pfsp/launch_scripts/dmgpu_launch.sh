@@ -1,5 +1,4 @@
 #!/bin/bash -l
-#SBATCH --nodes=1
 #SBATCH --account=project_465002032
 #SBATCH --partition=standard-g
 #SBATCH --ntasks-per-node=1
@@ -12,22 +11,26 @@ MIN_SIZE=25
 MAX_SIZE=50000
 DEVICES=1
 WORK_STEALING=1
+LOAD_BALANCING=0
 REPETITIONS=3
 JOBS=0
 MACHINES=0
 LEVEL=1
+NODES=1
 
 # === Parse command-line options ===
-while getopts ":m:M:D:w:r:j:g:l:" opt; do
+while getopts ":m:M:D:w:L:r:j:g:l:n:" opt; do
   case $opt in
     m) MIN_SIZE=$OPTARG ;;
     M) MAX_SIZE=$OPTARG ;;
     D) DEVICES=$OPTARG ;;
     w) WORK_STEALING=$OPTARG ;;
+    L) LOAD_BALANCING=$OPTARG ;;
     p) REPETITIONS=$OPTARG ;;
     j) JOBS=$OPTARG ;;
     g) MACHINES=$OPTARG ;;
     l) LEVEL=$OPTARG ;;
+    n) NODES=$OPTARG ;;
     \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
     :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
   esac
@@ -85,7 +88,7 @@ echo "------------------------------------------"
 for k in $INSTANCES; do
   for ((i=1; i<=REPETITIONS; i++)); do
     echo "Running instance $k (rep $i)"
-    srun ./../pfsp_multigpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE" -D "$DEVICES" -w "$WORK_STEALING"
+    srun --nodes=$NODES --gpus-per-node=8 --cpus-per-task=32 --ntasks-per-node=1 ./../pfsp_dist_multigpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE" -D "$DEVICES" -w "$WORK_STEALING" -L "$LOAD_BALANCING"
   done
 done
 

@@ -1,4 +1,4 @@
-#include "gpu_util.h"
+#include "gpu_util.cuh"
 
 inline void gpu_info()
 {
