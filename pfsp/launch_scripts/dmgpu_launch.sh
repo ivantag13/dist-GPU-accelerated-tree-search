@@ -26,7 +26,7 @@ while getopts ":m:M:D:w:L:r:j:g:l:n:" opt; do
     D) DEVICES=$OPTARG ;;
     w) WORK_STEALING=$OPTARG ;;
     L) LOAD_BALANCING=$OPTARG ;;
-    p) REPETITIONS=$OPTARG ;;
+    r) REPETITIONS=$OPTARG ;;
     j) JOBS=$OPTARG ;;
     g) MACHINES=$OPTARG ;;
     l) LEVEL=$OPTARG ;;

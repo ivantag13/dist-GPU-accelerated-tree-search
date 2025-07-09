@@ -24,7 +24,7 @@ while getopts ":m:M:D:w:r:j:g:l:" opt; do
     M) MAX_SIZE=$OPTARG ;;
     D) DEVICES=$OPTARG ;;
     w) WORK_STEALING=$OPTARG ;;
-    p) REPETITIONS=$OPTARG ;;
+    r) REPETITIONS=$OPTARG ;;
     j) JOBS=$OPTARG ;;
     g) MACHINES=$OPTARG ;;
     l) LEVEL=$OPTARG ;;

@@ -20,7 +20,7 @@ while getopts ":m:M:r:j:g:l:" opt; do
   case $opt in
     m) MIN_SIZE=$OPTARG ;;
     M) MAX_SIZE=$OPTARG ;;
-    p) REPETITIONS=$OPTARG ;;
+    r) REPETITIONS=$OPTARG ;;
     j) JOBS=$OPTARG ;;
     g) MACHINES=$OPTARG ;;
     l) LEVEL=$OPTARG ;;
