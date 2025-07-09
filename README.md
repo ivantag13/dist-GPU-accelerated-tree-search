@@ -36,6 +36,7 @@ By default, in our makefile the target GPU architectures are set for two cluster
 
 All the code is compiled using the provided makefile. When doing **`make`** the user can choose between three options. The first one is by adding no additional flags, which is convenient for a local compilation. Or by adding the flag **`SYSTEM`**. For instance:
 - **`make SYSTEM=g5k`**: set the compilation for the Grid'5000 system (AMD GPU architecture code set to `gfx906`)
+  - a bash file is available to load all concerning modules, run on terminal from this project root directory **`source config/g5k-module-load.sh`**. Attention, this file is particularly useful for the `HIP` implementation. If you want to execute the distributed version, you should run this bash file in all the nodes from your reservation for installing the necessary libraries and loading the proper modules. Moreover, do not forget to create the `hostfile` for your execution by doing `uniq $OAR_NODE_FILE > hostfile`
 - **`make SYSTEM=lumi`**: set the compilation for the LUMI system (AMD GPU architecture code set to `gfx90a`)
   - a bash file is available to load all concerning modules, run on terminal from this project root directory **`source config/lumi-module-load.sh`**
 
