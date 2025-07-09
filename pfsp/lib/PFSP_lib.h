@@ -14,11 +14,7 @@ extern "C"
 #include "c_bound_simple.h"
 #include "c_bound_johnson.h"
 #include "Pool_atom.h"
-
-#define BLOCK_SIZE 512
-
-#define MAX_JOBS 20
-#define MAX_MACHINES 20
+#include "macro.h"
 
   void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
                      int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool);

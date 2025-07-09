@@ -10,12 +10,7 @@ extern "C"
 #include <stdint.h>
 #include "c_bound_simple.h"	 // For structs definitions
 #include "c_bound_johnson.h" // For structs definitions
-
-
-#define BLOCK_SIZE 512
-
-#define MAX_JOBS 20
-#define MAX_MACHINES 20
+#include "macro.h"
 
     typedef struct
     {
