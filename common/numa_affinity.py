@@ -61,22 +61,58 @@ def _get_numa_affinity_amd(filename):
 
     return numa_affinities
 
+def _get_cpu_affinity(filename):
+    cpu_affinities = []
+
+    with open(filename, "r") as f:
+        lines = f.readlines()
+
+    for line in lines[1:]:
+        line = line.strip()
+        cpu_affinities.append(int(line[0]))
+
+    return cpu_affinities
+
 def get_numa_affinity():
     """
     Detects the system's GPUs (NVIDIA or AMD) and returns their NUMA affinities.
     """
-    if _has_nvidia_gpu():
-        with open("topo.txt", "w") as f:
-            subprocess.run(["nvidia-smi", "topo", "-m"], stdout=f)
-        return _get_numa_affinity_nvidia("topo.txt")
+    has_nvidia_gpu = _has_nvidia_gpu()
+    has_amd_gpu = _has_amd_gpu()
 
-    elif _has_amd_gpu():
-        with open("topo.txt", "w") as f:
-            subprocess.run(["rocm-smi", "--showtoponuma"], stdout=f)
-        return _get_numa_affinity_amd("topo.txt")
+    # Step 1: parses the NUMA/CPU affinities
+    if has_nvidia_gpu or has_amd_gpu:
+        # NOTE: there are false-positives when rocm-smi or nvidia-smi is installed
+        # but no GPUs are available (e.g., LUMI login nodes)
+        with open("topo1.txt", "w") as f:
+            subprocess.run(["lscpu", "-e=NODE"], stdout=f)
+        cpu_affinity = _get_cpu_affinity("topo1.txt")
+        os.remove("topo1.txt")
+
+        if has_nvidia_gpu:
+            with open("topo2.txt", "w") as f:
+                subprocess.run(["nvidia-smi", "topo", "-m"], stdout=f)
+            numa_affinity = _get_numa_affinity_nvidia("topo2.txt")
+            os.remove("topo2.txt")
+
+        else: #has_amd_gpu
+            with open("topo2.txt", "w") as f:
+                subprocess.run(["rocm-smi", "--showtoponuma"], stdout=f)
+            numa_affinity = _get_numa_affinity_amd("topo2.txt")
+            os.remove("topo2.txt")
 
     else:
-        exit("No GPU found...")
+        exit("Error - No GPU found")
+
+    # Step 2: generates the output file
+    with open("affinity.txt", "w") as f:
+        for i in range(0, len(cpu_affinity)):
+            thread_id = i
+            thread_affinity = cpu_affinity[i]
+            # NOTE: there are edge-cases where two GPUs share the same NUMA node
+            # (e.g., LUMI).
+            gpu_affinity = numa_affinity.index(thread_affinity)
+            f.write(f"{thread_id} {thread_affinity} {gpu_affinity}\n")
 
 if __name__ == "__main__":
-    print(get_numa_affinity())
+    get_numa_affinity()
