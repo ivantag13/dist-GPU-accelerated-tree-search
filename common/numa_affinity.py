@@ -1,9 +1,10 @@
 import os
 from sys import exit
 import subprocess
-import numpy as np
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+debug_mode = False
 
 def _has_nvidia_gpu():
     """
@@ -12,12 +13,14 @@ def _has_nvidia_gpu():
     try:
         output = subprocess.check_output(['nvidia-smi'], stderr=subprocess.STDOUT)
 
-        if "error" in output.lower():
+        if "error" in output.decode().lower():
             return False
         else:
             return True
 
-    except Exception:
+    except Exception as e:
+        if debug_mode:
+            print("nvidia-smi check failed:", e)
         return False
 
 def _has_amd_gpu():
@@ -27,15 +30,17 @@ def _has_amd_gpu():
     try:
         output = subprocess.check_output(['rocm-smi'], stderr=subprocess.STDOUT)
 
-        if "error" in output.lower():
+        if "error" in output.decode().lower():
             return False
         else:
             return True
 
-    except Exception:
+    except Exception as e:
+        if debug_mode:
+            print("rocm-smi check failed:", e)
         return False
 
-def _get_numa_affinity_nvidia(filename):
+def _parse_numa_affinity_nvidia(filename):
     """
     Parses topology file to extract NUMA affinity for each Nvidia GPU.
     """
@@ -54,7 +59,7 @@ def _get_numa_affinity_nvidia(filename):
 
     return numa_affinities
 
-def _get_numa_affinity_amd(filename):
+def _parse_numa_affinity_amd(filename):
     """
     Parses topology file to extract NUMA affinity for each AMD GPU.
     """
@@ -72,7 +77,10 @@ def _get_numa_affinity_amd(filename):
 
     return numa_affinities
 
-def _get_cpu_affinity(filename):
+def _parse_cpu_affinity(filename):
+    """
+    Parses topology file to extract NUMA affinity for each CPU thread.
+    """
     cpu_affinities = []
 
     with open(filename, "r") as f:
@@ -86,28 +94,30 @@ def _get_cpu_affinity(filename):
 
 def get_numa_affinity():
     """
-    Detects the system's GPUs (NVIDIA or AMD) and returns their NUMA affinities.
+    Collects NUMA affinity of each CPU thread and each GPU device. The output is
+    a file named "affinity.txt" in the following format:
+    thread_id thread_numa_node gpu_numa_node
     """
     has_nvidia_gpu = _has_nvidia_gpu()
     has_amd_gpu = _has_amd_gpu()
 
-    # Step 1: parses the NUMA/CPU affinities
+    # Step 1: parses the NUMA affinity of each CPU thread and GPU device
     if has_nvidia_gpu or has_amd_gpu:
         with open("topo1.txt", "w") as f:
             subprocess.run(["lscpu", "-e=NODE"], stdout=f)
-        cpu_affinity = _get_cpu_affinity("topo1.txt")
+        numa_affinity_threads = _parse_cpu_affinity("topo1.txt")
         os.remove("topo1.txt")
 
         if has_nvidia_gpu:
             with open("topo2.txt", "w") as f:
                 subprocess.run(["nvidia-smi", "topo", "-m"], stdout=f)
-            numa_affinity = _get_numa_affinity_nvidia("topo2.txt")
+            numa_affinity_gpus = _parse_numa_affinity_nvidia("topo2.txt")
             os.remove("topo2.txt")
 
         else: #has_amd_gpu
             with open("topo2.txt", "w") as f:
                 subprocess.run(["rocm-smi", "--showtoponuma"], stdout=f)
-            numa_affinity = _get_numa_affinity_amd("topo2.txt")
+            numa_affinity_gpus = _parse_numa_affinity_amd("topo2.txt")
             os.remove("topo2.txt")
 
     else:
@@ -115,38 +125,32 @@ def get_numa_affinity():
 
     # Step 2: manages cases where multiple GPUs share the same NUMA node
     special_case = False
-    for i in numa_affinity:
-        if numa_affinity.count(i) > 1:
+    for i in numa_affinity_gpus:
+        if numa_affinity_gpus.count(i) > 1:
             special_case = True
             break
 
     if special_case:
-        num_numa = len(set(numa_affinity))
+        nb_gpus = len(numa_affinity_gpus)
 
-        threads_per_numa = np.zeros(num_numa, dtype=int)
-        for numa_node in cpu_affinity:
-            threads_per_numa[numa_node] += 1
-
-        gpus_per_numa = np.zeros(num_numa, dtype=int)
-        for numa_node in numa_affinity:
-            gpus_per_numa[numa_node] += 1
-
-        threads_per_gpu = np.zeros(len(numa_affinity), dtype=int)
-        for i in range(0, len(numa_affinity)):
-            numa_node = numa_affinity[i]
-            threads_per_gpu[i] = threads_per_numa[numa_node] / gpus_per_numa[numa_node]
+        threads_per_gpu = [0] * nb_gpus
+        for i in range(0, nb_gpus):
+            numa_node = numa_affinity_gpus[i]
+            threads_per_numa = numa_affinity_threads.count(numa_node)
+            gpus_per_numa = numa_affinity_gpus.count(numa_node)
+            threads_per_gpu[i] = threads_per_numa / gpus_per_numa
 
     # Step 3: generates the output file
     with open("affinity.txt", "w") as f:
-        for i in range(0, len(cpu_affinity)):
+        for i in range(0, len(numa_affinity_threads)):
             thread_id = i
-            thread_affinity = cpu_affinity[i]
-            gpu_affinity = numa_affinity.index(thread_affinity)
+            thread_affinity = numa_affinity_threads[i]
+            gpu_affinity = numa_affinity_gpus.index(thread_affinity)
 
             if special_case:
                 threads_per_gpu[gpu_affinity] -= 1
                 if threads_per_gpu[gpu_affinity] == 0:
-                    numa_affinity[gpu_affinity] = -1
+                    numa_affinity_gpus[gpu_affinity] = -1
 
             f.write(f"{thread_id} {thread_affinity} {gpu_affinity}\n")
 
