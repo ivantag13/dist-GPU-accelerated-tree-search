@@ -160,7 +160,7 @@ int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
       if (pool->size < m)
       {
         atomic_store(&(pool->lock), false);
-        break;
+        return pool->size;
       }
       else
       {
@@ -177,19 +177,35 @@ int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
   return 0;
 }
 
-// int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
+// Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
+int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
+{
+  if (pool->size >= m)
+  {
+    int poolSize = MIN(pool->size, M);
+    pool->size -= poolSize;
+    for (int i = 0; i < poolSize; i++)
+      parents[i] = pool->elements[pool->front + pool->size + i];
+    return poolSize;
+  }
+  return pool->size;
+}
+
+// // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
+// Node *popBackBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize)
 // {
-//   if (pool->size >= m)
+//   if (pool->size >= 2 * m)
 //   {
-//     const int poolSize = MIN(pool->size, M);
-//     pool->size -= poolSize;
-//     for (int i = 0; i < poolSize; i++)
-//     {
+//     *poolSize = pool->size / 2;
+//     pool->size -= *poolSize;
+//     Node *parents = (Node *)malloc(*poolSize * sizeof(Node));
+//     for (int i = 0; i < *poolSize; i++)
 //       parents[i] = pool->elements[pool->front + pool->size + i];
-//     }
-//     return poolSize;
+//     return parents;
 //   }
-//   return 0;
+
+//   *poolSize = 0;
+//   return NULL;
 // }
 
 // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
@@ -219,23 +235,6 @@ Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half
     }
   }
   *Half = 0;
-  return NULL;
-}
-
-// Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
-Node *popBackBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize)
-{
-  if (pool->size >= 2 * m)
-  {
-    *poolSize = pool->size / 2;
-    pool->size -= *poolSize;
-    Node *parents = (Node *)malloc(*poolSize * sizeof(Node));
-    for (int i = 0; i < *poolSize; i++)
-      parents[i] = pool->elements[pool->front + pool->size + i];
-    return parents;
-  }
-
-  *poolSize = 0;
   return NULL;
 }
 

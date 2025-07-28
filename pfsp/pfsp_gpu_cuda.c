@@ -89,14 +89,43 @@ static inline int bytes_per_inv_lb2(int N, int M, int lim)
 /*******************************************************************************
 Statistics Functions
 *******************************************************************************/
+// void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int optimum,
+//                         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
+// {
+//   FILE *file;
+//   file = fopen("gpu.dat", "a");
+//   fprintf(file, "S-GPU-opt ta%d lb%d Time[%.4f] memCpy[%.4f] cudaMalloc[%.4f] kernelCall[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", inst, lb, timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, exploredTree, exploredSol, optimum);
+//   fclose(file);
+//   return;
+// }
+
 void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int optimum,
-                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
+                             const unsigned long long int exploredTree, const unsigned long long int exploredSol,
+                             const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
 {
-  FILE *file;
-  file = fopen("gpu.dat", "a");
-  fprintf(file, "S-GPU-opt ta%d lb%d Time[%.4f] memCpy[%.4f] cudaMalloc[%.4f] kernelCall[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", inst, lb, timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, exploredTree, exploredSol, optimum);
-  fclose(file);
-  return;
+    FILE *file = fopen("single-gpu.csv", "a");
+
+    // Optional: add CSV header only once (check if file is empty)
+    static int header_written = 0;
+    if (!header_written)
+    {
+        fseek(file, 0, SEEK_END);
+        long size = ftell(file);
+        if (size == 0)
+        {
+            fprintf(file, "instance_id,machines,jobs,lower_bound,optimum,total_time,memcpy_time,cuda_malloc_time,kernel_call_time,explored_tree,explored_sol\n");
+        }
+        header_written = 1;
+    }
+
+    // Write data
+    fprintf(file,
+            "%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%llu,%llu\n",
+            inst, machines, jobs, lb, optimum,
+            timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall,
+            exploredTree, exploredSol);
+
+    fclose(file);
 }
 
 /*******************************************************************************
@@ -118,7 +147,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   SinglePool_atom pool;
   initSinglePool_atom(&pool);
 
-  pushBack(&pool, root);
+  pushBackFree(&pool, root);
 
   // Timers
   struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
@@ -204,12 +233,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int totalBytes = 0;
   int indexChildren;
   double timeGenChildren = 0;
+  int poolSize;
 
   while (1)
   {
     // int poolSize = pool.size;
     // TODO : fix call of popBackBulkFree to use it here
-    int poolSize = popBackBulk(&pool, m, M, parents);
+    poolSize = popBackBulkFree(&pool, m, M, parents);
 
     if (poolSize > 0)
     {

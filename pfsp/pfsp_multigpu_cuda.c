@@ -212,11 +212,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     a sufficiently large amount of work for GPU computation.
   */
 
+  Node parent;
   while (pool.size < D * m)
   {
     // CPU side
     int hasWork = 0;
-    Node parent = popFrontFree(&pool, &hasWork);
+    parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -286,6 +287,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));
+    Node *stolenNodes = (Node *) malloc(M * sizeof(Node));
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
@@ -308,6 +310,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     timeCudaMalloc[gpuID] = endCudaMalloc - startCudaMalloc;
 
     int indexChildren;
+    Node parent;
 
     while (1)
     {
@@ -315,11 +318,37 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         Each task gets its parenst nodes from the pool
       */
       startTimePoolOps = omp_get_wtime();
-      int poolSize = popBackBulk(pool_loc, m, M, parents);
+      int poolSize;
+      bool expected;
+
+      // TODO: current implementation of loop that when poolSize < m, pool is developed locally on the CPU before attempt of WS
+      while (true)
+      { // WS1 loop
+        expected = false;
+        if (atomic_compare_exchange_strong(&(pool_loc->lock), &expected, true))
+        { // get the lock
+          poolSize = popBackBulkFree(pool_loc, m, M, parents);
+          if (poolSize < m)
+          {
+            int hasWork = 0;
+            for (int i = 0; i < poolSize; i++)
+            {
+              parent = popFrontFree(&pool, &hasWork);
+              decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, pool_loc);
+            }
+          }
+          else
+          {
+            atomic_store(&(pool_loc->lock), false);
+            break;
+          }
+        }
+      }
+
       endTimePoolOps = omp_get_wtime();
       timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
 
-      if (poolSize > 0)
+      if (poolSize >= m)
       {
         if (taskState == IDLE)
         {
@@ -376,7 +405,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
         genChildren[gpuID] += indexChildren;
       }
-      else
+      else if (poolSize == 0)
       {
         if (ws == 0)
           break;
@@ -406,14 +435,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
                 { // get the lock
                   int size = victim->size;
-                  int nodeSize = 0;
+                  int stolenNodesSize;
 
                   if (size >= 2 * m)
                   {
-                    Node *p = popBackBulkFree(victim, m, M, &nodeSize);
+                    stolenNodesSize = popBackBulkFree(victim, m, M, stolenNodes);
                     // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
 
-                    if (nodeSize == 0)
+                    if (stolenNodesSize == 0)
                     {                                       // safety check
                       atomic_store(&(victim->lock), false); // reset lock
                       printf("\nDEADCODE\n");
@@ -421,7 +450,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     }
 
                     startTimePoolOps = omp_get_wtime();
-                    pushBackBulk(pool_loc, p, nodeSize); // atomic_store inside
+                    pushBackBulk(pool_loc, stolenNodes, stolenNodesSize); // necessary atomic lock
                     endTimePoolOps = omp_get_wtime();
                     timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
 
