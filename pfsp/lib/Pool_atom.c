@@ -180,7 +180,9 @@ int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
 // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
 int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
 {
-  if (pool->size >= m)
+  if (pool->size < m)
+    return pool->size;
+  else
   {
     int poolSize = MIN(pool->size, M);
     pool->size -= poolSize;
@@ -188,7 +190,6 @@ int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *paren
       parents[i] = pool->elements[pool->front + pool->size + i];
     return poolSize;
   }
-  return pool->size;
 }
 
 // // Bulk removal from the end of the deque. Parallel-safety is not guaranteed.

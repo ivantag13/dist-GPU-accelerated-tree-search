@@ -241,7 +241,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     // TODO : fix call of popBackBulkFree to use it here
     poolSize = popBackBulkFree(&pool, m, M, parents);
 
-    if (poolSize > 0)
+    if (poolSize >= m)
     {
       clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       int sum = 0;

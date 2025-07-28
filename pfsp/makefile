@@ -1,12 +1,13 @@
 SHELL := /bin/bash
 
-SYSTEM ?= g5k
+SYSTEM ?= 
 
 # Compilers and common options
 C_COMPILER    := gcc
 MPI_COMPILER  := mpicc
 CUDA_COMPILER := nvcc
 HIP_COMPILER  := hipcc
+AMD_GPU_ARCH  := gfx1102
 
 # Platform-specific flags and libraries
 ifeq ($(SYSTEM), g5k)
