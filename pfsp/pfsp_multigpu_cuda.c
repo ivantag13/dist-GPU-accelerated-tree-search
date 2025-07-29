@@ -287,7 +287,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));
-    Node *stolenNodes = (Node *) malloc(M * sizeof(Node));
+    Node *stolenNodes = (Node *)malloc(M * sizeof(Node));
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
@@ -322,25 +322,44 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       bool expected;
 
       // TODO: current implementation of loop that when poolSize < m, pool is developed locally on the CPU before attempt of WS
-      while (true)
+      while (1)
       { // WS1 loop
         expected = false;
         if (atomic_compare_exchange_strong(&(pool_loc->lock), &expected, true))
         { // get the lock
-          poolSize = popBackBulkFree(pool_loc, m, M, parents);
-          if (poolSize < m)
+          if (pool_loc->size >= m)
           {
-            int hasWork = 0;
-            for (int i = 0; i < poolSize; i++)
-            {
-              parent = popFrontFree(&pool, &hasWork);
-              decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, pool_loc);
-            }
+            poolSize = popBackBulkFree(pool_loc, m, M, parents);
+            //printf("Case 1: poolSize=%d and pool_loc->size=%d\n", poolSize, pool_loc->size);
+            atomic_store(&(pool_loc->lock), false);
+
+            break;
+          }
+          else if (pool_loc->size == 0)
+          {
+            //printf("Case 2: pool_loc->size=%d\n", pool_loc->size);
+            poolSize = 0;
+            atomic_store(&(pool_loc->lock), false);
+
+            break;
           }
           else
           {
+            //printf("Case 3: poolSize=%d\n", pool_loc->size);
+            while (pool_loc->size < m)
+            {
+              // CPU side
+              int hasWork = 0;
+              parent = popFrontFree(pool_loc, &hasWork);
+              if (!hasWork)
+              {
+                //  atomic_store(&(pool_loc->lock), false);
+                break;
+              }
+
+              decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, pool_loc);
+            }
             atomic_store(&(pool_loc->lock), false);
-            break;
           }
         }
       }
@@ -408,7 +427,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       else if (poolSize == 0)
       {
         if (ws == 0)
+        {
+          //printf("GPUID[%d] Arrive at the end?\n");
           break;
+        }
         else
         {
           // Local work stealing
@@ -489,7 +511,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             {
               endTermination = omp_get_wtime();
               timeTermination[gpuID] += endTermination - startTermination;
-              break;
+              break; // From first while
             }
             endTermination = omp_get_wtime();
             timeTermination[gpuID] += endTermination - startTermination;

@@ -170,11 +170,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     a sufficiently large amount of work for GPU computation.
   */
 
+  Node parent;
   while (pool.size < m)
   {
     // CPU side
     int hasWork = 0;
-    Node parent = popFrontFree(&pool, &hasWork);
+    parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -323,7 +324,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBackFree(&pool, &hasWork);
+    parent = popBackFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
