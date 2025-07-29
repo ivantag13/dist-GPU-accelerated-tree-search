@@ -321,45 +321,35 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       int poolSize;
       bool expected;
 
-      // TODO: current implementation of loop that when poolSize < m, pool is developed locally on the CPU before attempt of WS
       while (1)
-      { // WS1 loop
+      {
         expected = false;
         if (atomic_compare_exchange_strong(&(pool_loc->lock), &expected, true))
-        { // get the lock
-          if (pool_loc->size >= m)
+        {                          // get the lock
+          if (pool_loc->size >= m) // Process nodes on the GPU
           {
             poolSize = popBackBulkFree(pool_loc, m, M, parents);
-            //printf("Case 1: poolSize=%d and pool_loc->size=%d\n", poolSize, pool_loc->size);
-            atomic_store(&(pool_loc->lock), false);
-
+            atomic_store(&(pool_loc->lock), false); // reset lock
             break;
           }
-          else if (pool_loc->size == 0)
+          else if (pool_loc->size == 0) // WS or termination detection
           {
-            //printf("Case 2: pool_loc->size=%d\n", pool_loc->size);
             poolSize = 0;
-            atomic_store(&(pool_loc->lock), false);
-
+            atomic_store(&(pool_loc->lock), false); // reset lock
             break;
           }
           else
           {
-            //printf("Case 3: poolSize=%d\n", pool_loc->size);
-            while (pool_loc->size < m)
+            while (pool_loc->size < m) // Process nodes on the CPU
             {
-              // CPU side
               int hasWork = 0;
               parent = popFrontFree(pool_loc, &hasWork);
               if (!hasWork)
-              {
-                //  atomic_store(&(pool_loc->lock), false);
                 break;
-              }
 
               decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, pool_loc);
             }
-            atomic_store(&(pool_loc->lock), false);
+            atomic_store(&(pool_loc->lock), false); // reset lock
           }
         }
       }
@@ -399,7 +389,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         // numBounds is the 'size' of the problem
         startKernelCall = omp_get_wtime();
         evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
-        // evaluate_gpu(jobs, lb, numBounds, nbBlocks, &best_l, lbound1_d, lbound2_d, parents_d, bounds_d);
         cudaDeviceSynchronize();
         endKernelCall = omp_get_wtime();
         timeKernelCall[gpuID] += endKernelCall - startKernelCall;
@@ -427,10 +416,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       else if (poolSize == 0)
       {
         if (ws == 0)
-        {
-          //printf("GPUID[%d] Arrive at the end?\n");
           break;
-        }
+
         else
         {
           // Local work stealing
@@ -479,8 +466,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     steal = true;
                     nSSteal++;
                     atomic_store(&(victim->lock), false); // reset lock
-                    // endTimeIdle = omp_get_wtime();
-                    // timeIdle[gpuID] += endTimeIdle - startTimeIdle;
                     goto WS0; // Break out of WS0 loop
                   }
 
@@ -539,18 +524,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     free(parents);
     free(bounds);
 
-#pragma omp critical
-    {
-      const int poolLocSize = pool_loc->size;
-      for (int i = 0; i < poolLocSize; i++)
-      {
-        int hasWork = 0;
-        pushBackFree(&pool, popBackFree(pool_loc, &hasWork));
-        if (!hasWork)
-          break;
-      }
-    }
-
     eachExploredTree[gpuID] = tree;
     eachExploredSol[gpuID] = sol;
     eachBest[gpuID] = best_l;
@@ -569,6 +542,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   double maxDevice = get_max(timeDevice, D);
   t2 -= maxDevice;
 
+  // TODO: apply OpenMP reductions
   for (int i = 0; i < D; i++)
   {
     *exploredTree += eachExploredTree[i];
@@ -576,10 +550,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   }
   *best = findMin(eachBest, D);
 
+  *elapsedTime = t1 + t2;
   printf("\nSearch on GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
-  printf("Elapsed time: %f [s]\n", t2);
+  printf("Elapsed time: %f [s]\n", *elapsedTime);
   printf("Workload per GPU: ");
   for (int gpuID = 0; gpuID < D; gpuID++)
     printf("%.2f ", (double)100 * eachExploredTree[gpuID] / ((double)*exploredTree));
@@ -589,33 +564,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     printf("%.2f ", timeGenChildren[i]);
   printf("\n");
 
-  /*
-    Step 3: We complete the depth-first search on CPU.
-  */
-
-  startTime = omp_get_wtime();
-  while (1)
-  {
-    int hasWork = 0;
-    Node parent = popBackFree(&pool, &hasWork);
-    if (!hasWork)
-      break;
-
-    decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, &pool);
-  }
-
   // Freeing memory for structs common to all steps
   deleteSinglePool_atom(&pool);
   free_bound_data(lbound1);
   free_johnson_bd_data(lbound2);
-
-  endTime = omp_get_wtime();
-  double t3 = endTime - startTime;
-  *elapsedTime = t1 + t2 + t3;
-  printf("\nSearch on CPU completed\n");
-  printf("Size of the explored tree: %llu\n", *exploredTree);
-  printf("Number of explored solutions: %llu\n", *exploredSol);
-  printf("Elapsed time: %f [s]\n", t3);
 
   printf("\nExploration terminated.\n");
 }
