@@ -238,8 +238,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   while (1)
   {
-    // int poolSize = pool.size;
-    // TODO : fix call of popBackBulkFree to use it here
     poolSize = popBackBulkFree(&pool, m, M, parents);
 
     if (poolSize >= m)
