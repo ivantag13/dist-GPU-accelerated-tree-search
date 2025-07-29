@@ -54,29 +54,30 @@ void pfsp_search(const int inst, const int lb, int *best,
 
   int oldExploredSol = 0;
 
+  Node parent;
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBackFree(&pool, &hasWork);
+    parent = popBackFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
     decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, &pool);
-    if (*exploredSol > oldExploredSol) // This will happen only in case parent is solution node
-    // If printing with decompose options, all possible children that are solutions will be printed as well
-    {
-      // Printf Node info
-      printf("\nNode info:\n");
-      printf("Depth: %d\n", parent.depth);
-      printf("Limit1: %d\n", parent.limit1);
-      printf("Permutation: ");
-      for (int i = 0; i < MAX_JOBS; i++)
-      {
-        printf("%d ", parent.prmu[i]);
-      }
-      printf("\n\n");
-      oldExploredSol += (*exploredSol - oldExploredSol);
-    }
+    // if (*exploredSol > oldExploredSol) // This will happen only in case parent is solution node
+    // // If printing with decompose options, all possible children that are solutions will be printed as well
+    // {
+    //   // Printf Node info
+    //   printf("\nNode info:\n");
+    //   printf("Depth: %d\n", parent.depth);
+    //   printf("Limit1: %d\n", parent.limit1);
+    //   printf("Permutation: ");
+    //   for (int i = 0; i < MAX_JOBS; i++)
+    //   {
+    //     printf("%d ", parent.prmu[i]);
+    //   }
+    //   printf("\n\n");
+    //   oldExploredSol += (*exploredSol - oldExploredSol);
+    // }
   }
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
