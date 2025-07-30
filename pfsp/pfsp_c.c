@@ -41,7 +41,7 @@ void pfsp_search(const int inst, const int lb, int *best,
   fill_lags(lbound1->p_times, lbound2);
   fill_johnson_schedules(lbound1->p_times, lbound2);
 
-  Node root;
+  Node root, parent;
   initRoot(&root, jobs);
 
   SinglePool_atom pool;
@@ -55,7 +55,7 @@ void pfsp_search(const int inst, const int lb, int *best,
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBackFree(&pool, &hasWork);
+    parent = popBackFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
