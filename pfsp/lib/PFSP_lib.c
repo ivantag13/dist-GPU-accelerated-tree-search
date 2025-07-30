@@ -3,19 +3,20 @@ Implementation of PFSP Nodes.
 *******************************************************************************/
 #include "PFSP_lib.h"
 
-// Evaluate and generate children nodes on CPU.
+// Evaluate and generate children nodes on CPU using LB1 bounding function. Parallel safety is not guaranteed.
 void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
                    int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
+  Node child;
+  int lowerbound;
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
-    Node child;
     child.depth = parent.depth + 1;
     child.limit1 = parent.limit1 + 1;
     memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
     swap(&child.prmu[parent.depth], &child.prmu[i]);
 
-    int lowerbound = lb1_bound(lbound1, child.prmu, child.limit1, jobs);
+    lowerbound = lb1_bound(lbound1, child.prmu, child.limit1, jobs);
 
     if (child.depth == jobs)
     { // if child leaf
@@ -30,24 +31,29 @@ void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const No
     { // if not leaf
       if (lowerbound < *best)
       { // if child feasible
-        pushBack(pool, child);
+        pushBackFree(pool, child);
         *tree_loc += 1;
       }
     }
   }
 }
 
+// Evaluate and generate children nodes on CPU using LB1_d bounding function. Parallel safety is not guaranteed.
 void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
                      int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
-  int *lb_begin = (int *)malloc(jobs * sizeof(int));
+  // This declaration is better for performance, memory is on stack
+  int lb_begin[jobs];
+  // int *lb_begin = (int *)malloc(jobs * sizeof(int));
+  int job, lb;
+  Node child;
 
   lb1_children_bounds(lbound1, parent.prmu, parent.limit1, jobs, lb_begin);
 
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
-    const int job = parent.prmu[i];
-    const int lb = lb_begin[job];
+    job = parent.prmu[i];
+    lb = lb_begin[job];
 
     if (parent.depth + 1 == jobs)
     { // if child leaf
@@ -62,34 +68,36 @@ void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const 
     { // if not leaf
       if (lb < *best)
       { // if child feasible
-        Node child;
         child.depth = parent.depth + 1;
         child.limit1 = parent.limit1 + 1;
         memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
         swap(&child.prmu[parent.depth], &child.prmu[i]);
 
-        pushBack(pool, child);
+        pushBackFree(pool, child);
         *tree_loc += 1;
       }
     }
   }
 
-  free(lb_begin);
+  // free(lb_begin);
 }
 
+// Evaluate and generate children nodes on CPU using LB2 bounding function. Parallel safety is not guaranteed.
 void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2,
                    const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
                    SinglePool_atom *pool)
 {
+  Node child;
+  int lowerbound;
+
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
-    Node child;
     child.depth = parent.depth + 1;
     child.limit1 = parent.limit1 + 1;
     memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
     swap(&child.prmu[parent.depth], &child.prmu[i]);
 
-    int lowerbound = lb2_bound(lbound1, lbound2, child.prmu, child.limit1, jobs, *best);
+    lowerbound = lb2_bound(lbound1, lbound2, child.prmu, child.limit1, jobs, *best);
 
     if (child.depth == jobs)
     { // if child leaf
@@ -104,7 +112,7 @@ void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb
     { // if not leaf
       if (lowerbound < *best)
       { // if child feasible
-        pushBack(pool, child);
+        pushBackFree(pool, child);
         *tree_loc += 1;
       }
     }
@@ -135,17 +143,19 @@ void decompose(const int jobs, const int lb, int *best,
 void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
                        unsigned long long int *exploredSol, int *best, SinglePool_atom *pool, int *index)
 {
-  int sum = 0;
-  int childrenIndex = 0;
+  int sum = 0, childrenIndex = 0, lowerbound, limit1;
+  uint8_t depth;
+  Node parent, child;
+
   for (int i = 0; i < size; i++)
   {
-    Node parent = parents[i];
-    const uint8_t depth = parent.depth;
-    const int limit1 = parent.limit1;
+    parent = parents[i];
+    depth = parent.depth;
+    limit1 = parent.limit1;
 
     for (int j = limit1 + 1; j < jobs; j++)
     {
-      const int lowerbound = bounds[(j - (limit1 + 1)) + sum];
+      lowerbound = bounds[(j - (limit1 + 1)) + sum];
 
       // If child leaf
       if (depth + 1 == jobs)
@@ -160,7 +170,6 @@ void generate_children(Node *parents, Node *children, const int size, const int 
       { // If not leaf
         if (lowerbound < *best)
         {
-          Node child;
           memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
           swap(&child.prmu[depth], &child.prmu[j]);
           child.depth = depth + 1;
@@ -168,7 +177,6 @@ void generate_children(Node *parents, Node *children, const int size, const int 
           children[childrenIndex] = child;
           childrenIndex++;
 
-          //          pushBack(pool, child);
           *exploredTree += 1;
         }
       }
