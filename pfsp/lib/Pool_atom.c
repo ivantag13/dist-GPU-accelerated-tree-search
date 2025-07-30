@@ -1,5 +1,6 @@
 #include "Pool_atom.h"
 
+// Initialization of pool.
 void initSinglePool_atom(SinglePool_atom *pool)
 {
   pool->elements = (Node *)malloc(INITIAL_CAPACITY * sizeof(Node));
@@ -9,6 +10,7 @@ void initSinglePool_atom(SinglePool_atom *pool)
   atomic_store(&(pool->lock), false);
 }
 
+// Static cyclical distribution of nodes from pool_source to pool. Parallel safety is not guaranteed.
 void roundRobin_distribution(SinglePool_atom *pool, SinglePool_atom *pool_source, int poolID, int step)
 {
   const int poolSize = pool_source->size;
@@ -56,7 +58,7 @@ void pushBack(SinglePool_atom *pool, Node node)
   }
 }
 
-// Insertion to the end of the deque.
+// Insertion to the end of the deque. Parallel safety is not guaranteed.
 void pushBackFree(SinglePool_atom *pool, Node node)
 {
   if (pool->front + pool->size >= pool->capacity)
@@ -92,7 +94,7 @@ void pushBackBulk(SinglePool_atom *pool, Node *nodes, int size)
     }
   }
 }
-
+// Parallel-safe bulk insertion to the end of the deque. Parallel safety is not guaranteed.
 void pushBackBulkFree(SinglePool_atom *pool, Node *nodes, int size)
 {
   if (pool->front + pool->size + size >= pool->capacity)
@@ -135,7 +137,7 @@ Node popBack(SinglePool_atom *pool, int *hasWork)
   return (Node){0};
 }
 
-// Removal from the end of the deque. Parallel-safety is not guaranteed.
+// Removal from the end of the deque. Parallel safety is not guaranteed.
 Node popBackFree(SinglePool_atom *pool, int *hasWork)
 {
   if (pool->size > 0)
@@ -160,10 +162,10 @@ int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
       if (pool->size < m)
       {
         atomic_store(&(pool->lock), false);
-        break;
+        return pool->size;
       }
       else
-      {
+      { 
         int poolSize = MIN(pool->size, M);
         pool->size -= poolSize;
         for (int i = 0; i < poolSize; i++)
@@ -173,26 +175,25 @@ int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
       }
     }
   }
-
-  return 0;
 }
 
-// int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
-// {
-//   if (pool->size >= m)
-//   {
-//     const int poolSize = MIN(pool->size, M);
-//     pool->size -= poolSize;
-//     for (int i = 0; i < poolSize; i++)
-//     {
-//       parents[i] = pool->elements[pool->front + pool->size + i];
-//     }
-//     return poolSize;
-//   }
-//   return 0;
-// }
+// Bulk removal from the end of the deque. Parallel safety is not guaranteed.
+int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
+{
+  if (pool->size >= m)
+  {
+    int poolSize = MIN(pool->size, M);
+    pool->size -= poolSize;
+    for (int i = 0; i < poolSize; i++)
+    {
+      parents[i] = pool->elements[pool->front + pool->size + i];
+    }
+    return poolSize;
+  }
+  return pool->size;
+}
 
-// Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
+// Bulk removal from the end of the deque. Parallel safety is not guaranteed.
 Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half)
 {
   bool expected;
@@ -222,24 +223,7 @@ Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half
   return NULL;
 }
 
-// Bulk removal from the end of the deque. Parallel-safety is not guaranteed.
-Node *popBackBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize)
-{
-  if (pool->size >= 2 * m)
-  {
-    *poolSize = pool->size / 2;
-    pool->size -= *poolSize;
-    Node *parents = (Node *)malloc(*poolSize * sizeof(Node));
-    for (int i = 0; i < *poolSize; i++)
-      parents[i] = pool->elements[pool->front + pool->size + i];
-    return parents;
-  }
-
-  *poolSize = 0;
-  return NULL;
-}
-
-// Removal from the front of the deque. Parallel-safety is not guaranteed.
+// Removal from the front of the deque. Parallel safety is not guaranteed.
 Node popFrontFree(SinglePool_atom *pool, int *hasWork)
 {
   if (pool->size > 0)
@@ -252,7 +236,7 @@ Node popFrontFree(SinglePool_atom *pool, int *hasWork)
   return (Node){0};
 }
 
-// Bulk removal from the front of the deque. Parallel-safety is not guaranteed.
+// Bulk removal from the front of the deque. Parallel safety is not guaranteed.
 Node *popFrontBulkFree(SinglePool_atom *pool, const int m, const int M, int *poolSize, double perc)
 {
   if (pool->size >= 2 * m)
