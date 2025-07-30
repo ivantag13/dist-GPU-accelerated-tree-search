@@ -7,21 +7,21 @@ extern "C"
 #include "PFSP_gpu_lib.cuh"
 #include "bounds_gpu.cu"
 
-// CUDA error checking
-// TODO: fix portability for variable cudaError_t (https://rocm.docs.amd.com/projects/HIP/en/docs-develop/how-to/hip_porting_guide.html)
-// #define gpuErrchk(ans)                          \
+  // CUDA error checking
+  // TODO: fix portability for variable cudaError_t (https://rocm.docs.amd.com/projects/HIP/en/docs-develop/how-to/hip_porting_guide.html)
+  // #define gpuErrchk(ans)                          \
 //   {                                             \
 //     gpuAssert((ans), __FILE__, __LINE__, true); \
 //   }
-//   void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
-//   {
-//     if (code != cudaSuccess)
-//     {
-//       fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-//       if (abort)
-//         exit(code);
-//     }
-//   }
+  //   void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
+  //   {
+  //     if (code != cudaSuccess)
+  //     {
+  //       fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+  //       if (abort)
+  //         exit(code);
+  //     }
+  //   }
 
   __device__ void swap_cuda(int *a, int *b)
   {
@@ -189,3 +189,66 @@ extern "C"
 #ifdef __cplusplus
 }
 #endif
+
+/*******************************************************************************
+FLOP estimation
+*******************************************************************************/
+// TODO: (TO FIX) PFLOPs estimation on the GPU
+// TODO: Fix FLOP estimations or use appropriate tool to measure it
+// Number of machine‑pairs as a function of M
+//   P = M*(M‑1)/2
+int P_of(int M)
+{
+  return (int)M * (M - 1) / 2;
+}
+
+// FLOP count per single lb1 bound invocation,
+// as a function of N (jobs), M (machines), and lim (limit1):
+int flop_lb1(int N, int M, int lim)
+{
+  // 1) schedule_front: (lim+1) * [1 add + 2*(M‑1) ops]
+  int F_front = (int)(lim) * (1 + 2 * (M - 1));
+  // 2) sum_unscheduled: (N‑(lim+1)) * M adds
+  int F_remain = (int)(N - (lim)) * M;
+  // 3) machine_bound_from_parts: 2 + 4*(M‑1)
+  int F_bind = 2 + 4 * (M - 1);
+  return F_front + F_remain + F_bind;
+}
+
+// Bytes per single lb1‑bound invocation:
+//  - loads  = N*M ints  (schedule_front + sum_unscheduled)
+//  - stores = 1 int      (write one bounds entry)
+//  - total bytes = 4 bytes/Int * (loads + stores)
+int bytes_per_inv_lb1(int N, int M)
+{
+  int loads = (int)N * M;
+  int stores = 1;
+  return 4 * (loads + stores);
+}
+
+// FLOP count per single lb2 bound invocation:
+//   same front/remain cost as lb1, plus the lb_makespan loop over P pairs
+int flop_lb2(int N, int M, int lim)
+{
+  int F_front = (int)(lim) * (1 + 2 * (M - 1));
+  int F_remain = (int)(N - (lim)) * M;
+  int P = P_of(M);
+  // For each pair: 4 ops per unscheduled job + 4 final ops
+  int unsched = (int)(N - (lim));
+  int F_pair = 4 * unsched + 4;
+  int F_makesp = P * F_pair;
+  return F_front + F_remain + F_makesp;
+}
+
+// Bytes per single lb2‑bound invocation:
+//  - loads  = N*M                           (front + remain)
+//           + 3 * P * (N - lim - 1)         (2 p_times + 1 lag per unscheduled job per pair)
+//  - stores = 1
+int bytes_per_inv_lb2(int N, int M, int lim)
+{
+  int P = P_of(M);
+  int uns = (int)N - lim;
+  int loads = (int)N * M + 3 * P * uns;
+  int stores = 1;
+  return 4 * (loads + stores);
+}

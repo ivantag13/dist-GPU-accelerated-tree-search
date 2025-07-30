@@ -18,6 +18,16 @@ extern "C"
 	void lb2_alloc_gpu(lb2_bound_data *lbound2_d, lb2_bound_data *lbound2, int *johnson_schedule_d, int *lags_d,
 					   int *machine_pairs_1_d, int *machine_pairs_2_d, int *machine_pair_order_d, int jobs, int machines);
 
+	int P_of(int M);
+
+	int flop_lb1(int N, int M, int lim);
+
+	int bytes_per_inv_lb1(int N, int M);
+
+	int flop_lb2(int N, int M, int lim);
+
+	int bytes_per_inv_lb2(int N, int M, int lim);
+
 #ifdef __cplusplus
 }
 #endif
