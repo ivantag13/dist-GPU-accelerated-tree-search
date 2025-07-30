@@ -19,88 +19,15 @@
 #include "lib/c_bound_johnson.h"
 #include "lib/c_taillard.h"
 #include "lib/PFSP_gpu_lib.cuh"
-#include "../common/gpu_util.cuh"
 #include "lib/PFSP_lib.h"
 #include "lib/Pool_atom.h"
+#include "lib/PFSP_statistic.h"
 #include "../common/util.h"
+#include "../common/gpu_util.cuh"
+
 
 /*******************************************************************************
-FLOP estimation
-*******************************************************************************/
-// TODO: Fix FLOP estimations or use appropriate tool to measure it
-// Number of machine‑pairs as a function of M
-//   P = M*(M‑1)/2
-static inline int P_of(int M)
-{
-  return (int)M * (M - 1) / 2;
-}
-
-// FLOP count per single lb1 bound invocation,
-// as a function of N (jobs), M (machines), and lim (limit1):
-static inline int flop_lb1(int N, int M, int lim)
-{
-  // 1) schedule_front: (lim+1) * [1 add + 2*(M‑1) ops]
-  int F_front = (int)(lim) * (1 + 2 * (M - 1));
-  // 2) sum_unscheduled: (N‑(lim+1)) * M adds
-  int F_remain = (int)(N - (lim)) * M;
-  // 3) machine_bound_from_parts: 2 + 4*(M‑1)
-  int F_bind = 2 + 4 * (M - 1);
-  return F_front + F_remain + F_bind;
-}
-
-// Bytes per single lb1‑bound invocation:
-//  - loads  = N*M ints  (schedule_front + sum_unscheduled)
-//  - stores = 1 int      (write one bounds entry)
-//  - total bytes = 4 bytes/Int * (loads + stores)
-static inline int bytes_per_inv_lb1(int N, int M)
-{
-  int loads = (int)N * M;
-  int stores = 1;
-  return 4 * (loads + stores);
-}
-
-// FLOP count per single lb2 bound invocation:
-//   same front/remain cost as lb1, plus the lb_makespan loop over P pairs
-static inline int flop_lb2(int N, int M, int lim)
-{
-  int F_front = (int)(lim) * (1 + 2 * (M - 1));
-  int F_remain = (int)(N - (lim)) * M;
-  int P = P_of(M);
-  // For each pair: 4 ops per unscheduled job + 4 final ops
-  int unsched = (int)(N - (lim));
-  int F_pair = 4 * unsched + 4;
-  int F_makesp = P * F_pair;
-  return F_front + F_remain + F_makesp;
-}
-
-// Bytes per single lb2‑bound invocation:
-//  - loads  = N*M                           (front + remain)
-//           + 3 * P * (N - lim - 1)         (2 p_times + 1 lag per unscheduled job per pair)
-//  - stores = 1
-static inline int bytes_per_inv_lb2(int N, int M, int lim)
-{
-  int P = P_of(M);
-  int uns = (int)N - lim;
-  int loads = (int)N * M + 3 * P * uns;
-  int stores = 1;
-  return 4 * (loads + stores);
-}
-
-/*******************************************************************************
-Statistics Functions
-*******************************************************************************/
-void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int optimum,
-                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
-{
-  FILE *file;
-  file = fopen("gpu.dat", "a");
-  fprintf(file, "S-GPU-opt ta%d lb%d Time[%.4f] memCpy[%.4f] cudaMalloc[%.4f] kernelCall[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", inst, lb, timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, exploredTree, exploredSol, optimum);
-  fclose(file);
-  return;
-}
-
-/*******************************************************************************
-Implementation of the parallel CUDA GPU PFSP search.
+Implementation of the parallel single-GPU PFSP search.
 *******************************************************************************/
 void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
                  unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
@@ -112,13 +39,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int machines = taillard_get_nb_machines(inst);
 
   // Starting pool
-  Node root;
+  Node root, parent;
   initRoot(&root, jobs);
 
   SinglePool_atom pool;
   initSinglePool_atom(&pool);
 
-  pushBack(&pool, root);
+  pushBackFree(&pool, root);
 
   // Timers
   struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
@@ -141,11 +68,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     a sufficiently large amount of work for GPU computation.
   */
 
+  int hasWork;
   while (pool.size < m)
   {
     // CPU side
-    int hasWork = 0;
-    Node parent = popFrontFree(&pool, &hasWork);
+    hasWork = 0;
+    parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -204,14 +132,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int totalBytes = 0;
   int indexChildren;
   double timeGenChildren = 0;
+  int poolSize;
 
   while (1)
   {
     // int poolSize = pool.size;
     // TODO : fix call of popBackBulkFree to use it here
-    int poolSize = popBackBulk(&pool, m, M, parents);
+    poolSize = popBackBulkFree(&pool, m, M, parents);
 
-    if (poolSize > 0)
+    if (poolSize >= m)
     {
       clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       int sum = 0;
@@ -355,7 +284,7 @@ int main(int argc, char *argv[])
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file(inst, machines, jobs, lb, optimum, exploredTree, exploredSol, elapsedTime, timeCudaMemCpy, timeCudaMalloc, timeKernelCall);
+  print_results_file_single_gpu(inst, machines, jobs, lb, optimum, exploredTree, exploredSol, elapsedTime, timeCudaMemCpy, timeCudaMalloc, timeKernelCall);
 
   return 0;
 }
