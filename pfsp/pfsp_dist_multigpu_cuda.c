@@ -23,7 +23,9 @@
 #include "lib/PFSP_gpu_lib.cuh"
 #include "lib/PFSP_lib.h"
 #include "lib/Pool_atom.h"
+#include "lib/PFSP_statistic.h"
 #include "../common/util.h"
+// #include "../common/gpu_util.cuh"
 
 /******************************************************************************
 Create Node MPI data type
@@ -40,79 +42,6 @@ void create_mpi_node_type(MPI_Datatype *mpi_node_type)
   MPI_Datatype types[3] = {MPI_UINT8_T, MPI_INT, MPI_INT};
   MPI_Type_create_struct(3, blocklengths, offsets, types, mpi_node_type);
   MPI_Type_commit(mpi_node_type);
-}
-
-/******************************************************************************
-Statistics function
-******************************************************************************/
-void print_results_file(const int inst, const int machines, const int jobs, const int lb, const int D, const int w, const int commSize, const int optimum,
-                        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
-                        unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
-                        double *timeKernelCall, double *timeIdle, double *workloadProc)
-{
-  FILE *file;
-  file = fopen("distMultigpu.dat", "a");
-  fprintf(file, "\nProc[%d] LB[%d] GPU[%d] ta[%d] lb[%d] time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
-  fprintf(file, "Workload per Proc: ");
-  compute_boxplot_stats(workloadProc, commSize, file);
-  fprintf(file, "Max Kernel Call Times per Proc: ");
-  compute_boxplot_stats(timeKernelCall, commSize, file);
-  fprintf(file, "Max Idle Times per Proc: ");
-  compute_boxplot_stats(timeIdle, commSize, file);
-  fprintf(file, "Load Balancing per Proc: ");
-  for (int i = 0; i < commSize; i++)
-  {
-    if (i != commSize - 1)
-      fprintf(file, "%llu ", nStealsProc[i]);
-    else
-      fprintf(file, "%llu\n", nStealsProc[i]);
-  }
-  fclose(file);
-
-  file = fopen("distMultigpu_detail.dat", "a");
-  fprintf(file, "\nProc[%d] LB[%d] GPU[%d] ta%d lb%d time[%.4f] Tree[%llu] Sol[%llu] Best[%d]\n", commSize, w, D, inst, lb, timer, exploredTree, exploredSol, optimum);
-  fprintf(file, "Explored Nodes per Proc: ");
-  for (int i = 0; i < commSize; i++)
-  {
-    if (i != commSize - 1)
-      fprintf(file, "%llu ", expTreeProc[i]);
-    else
-      fprintf(file, "%llu\n", expTreeProc[i]);
-  }
-  fprintf(file, "Explored Solutions per Proc: ");
-  for (int i = 0; i < commSize; i++)
-  {
-    if (i != commSize - 1)
-      fprintf(file, "%llu ", expSolProc[i]);
-    else
-      fprintf(file, "%llu\n", expSolProc[i]);
-  }
-  fprintf(file, "Time kernelCall per Proc: ");
-  for (int i = 0; i < commSize; i++)
-  {
-    if (i != commSize - 1)
-      fprintf(file, "%.4f ", timeKernelCall[i]);
-    else
-      fprintf(file, "%.4f\n", timeKernelCall[i]);
-  }
-  fprintf(file, "Time Idle per Proc: ");
-  for (int i = 0; i < commSize; i++)
-  {
-    if (i != commSize - 1)
-      fprintf(file, "%.4f ", timeIdle[i]);
-    else
-      fprintf(file, "%.4f\n", timeIdle[i]);
-  }
-  fprintf(file, "Succesful Load Balancing per Proc: ");
-  for (int i = 0; i < commSize; i++)
-  {
-    if (i != commSize - 1)
-      fprintf(file, "%llu ", nStealsProc[i]);
-    else
-      fprintf(file, "%llu\n", nStealsProc[i]);
-  }
-  fclose(file);
-  return;
 }
 
 /***********************************************************************************
@@ -277,6 +206,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));
+    Node *stolenNodes = (Node *)malloc(M * sizeof(Node));
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
@@ -700,13 +630,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
                 { // get the lock
                   int size = victim->size;
-                  int nodeSize = 0;
+                  int stolenNodesSize;
 
                   if (size >= 2 * m)
                   {
-                    Node *p = popBackBulkFree(victim, m, M, &nodeSize);
+                    stolenNodesSize = popBackBulkFree(victim, m, M, stolenNodes);
 
-                    if (nodeSize == 0)
+                    if (stolenNodesSize == 0)
                     {                                       // safety check
                       atomic_store(&(victim->lock), false); // reset lock
                       printf("\nDEADCODE\n");
@@ -717,7 +647,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                       pool_loc.pushBack(p[i]);
                     } */
 
-                    pushBackBulk(pool_loc, p, nodeSize);
+                    pushBackBulk(pool_loc, stolenNodes, stolenNodesSize);
 
                     steal = true;
                     nSSteal++;
@@ -993,7 +923,7 @@ int main(int argc, char *argv[])
   srand(time(NULL));
 
   int version = 3; // Distributed Multi-GPU version is code 3
-  // Distributed Multi-GPU PFSP only uses: inst, lb, ub, m, M, D, ws, LB
+  // Distributed Multi-GPU PFSP only uses: inst, lb, ub, m, M, D, LB
   int inst, lb, ub, m, M, D, ws, LB;
   double perc;
   parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &ws, &LB, &perc);
@@ -1024,7 +954,8 @@ int main(int argc, char *argv[])
   if (MPIRank == 0)
   {
     print_results(optimum, exploredTree, exploredSol, elapsedTime);
-    print_results_file(inst, machines, jobs, lb, D, LB, commSize, optimum, exploredTree, exploredSol, elapsedTime, expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc);
+    print_results_file_dist_multi_gpu(inst, lb, D, LB, commSize, optimum, exploredTree, exploredSol, elapsedTime,
+                                      expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc);
   }
 
   MPI_Finalize();
