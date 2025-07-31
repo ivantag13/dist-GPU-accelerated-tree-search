@@ -472,7 +472,7 @@ int main(int argc, char *argv[])
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file_multi_gpu(inst, machines, jobs, lb, D, ws, optimum, exploredTree, exploredSol, elapsedTime,
+  print_results_file_multi_gpu(inst, lb, D, ws, optimum, exploredTree, exploredSol, elapsedTime,
                                expTreeGPU, expSolGPU, genChildren, nStealsGPU, nSStealsGPU, nTerminationGPU, timeCudaMemCpy, timeCudaMalloc,
                                timeKernelCall, timeIdle, timeTermination, timePoolOps, timeGenChildren);
 
