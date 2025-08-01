@@ -8,8 +8,6 @@ extern "C"
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <cuda.h>
-#include <cuda_runtime.h>
 
     __host__ void gpu_info();
 

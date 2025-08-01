@@ -1,4 +1,6 @@
 #include "gpu_util.cuh"
+#include <cuda.h> // Leave cuda lib here because .cuh is not compiled
+#include <cuda_runtime.h>
 
 __host__ void gpu_info()
 {
