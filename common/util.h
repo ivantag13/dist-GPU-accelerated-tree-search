@@ -19,7 +19,12 @@ extern "C"
     Auxiliary functions
     ******************************************************************************/
 
-    void swap(int *a, int *b);
+    static inline void swap(int *a, int *b)
+    {
+        int tmp = *b;
+        *b = *a;
+        *a = tmp;
+    }
 
     bool allIdle(_Atomic bool arr[], int size, _Atomic bool *flag);
 

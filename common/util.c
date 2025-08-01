@@ -1,13 +1,5 @@
 #include "util.h"
 
-// Function that performs a swap between two integers
-inline void swap(int *a, int *b)
-{
-  int tmp = *b;
-  *b = *a;
-  *a = tmp;
-}
-
 // Function to check if all elements in an array of atomic bool are IDLE
 static bool _allIdle(_Atomic bool arr[], int size)
 {
