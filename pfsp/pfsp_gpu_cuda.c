@@ -39,13 +39,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int machines = taillard_get_nb_machines(inst);
 
   // Starting pool
-  Node root, parent;
+  Node root;
   initRoot(&root, jobs);
 
   SinglePool_atom pool;
   initSinglePool_atom(&pool);
 
-  pushBackFree(&pool, root);
+  pushBack(&pool, root);
 
   // Timers
   struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
@@ -68,12 +68,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     a sufficiently large amount of work for GPU computation.
   */
 
-  int hasWork;
   while (pool.size < m)
   {
     // CPU side
-    hasWork = 0;
-    parent = popFrontFree(&pool, &hasWork);
+    int hasWork = 0;
+    Node parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -132,15 +131,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int totalBytes = 0;
   int indexChildren;
   double timeGenChildren = 0;
-  int poolSize;
 
   while (1)
   {
     // int poolSize = pool.size;
     // TODO : fix call of popBackBulkFree to use it here
-    poolSize = popBackBulkFree(&pool, m, M, parents);
+    int poolSize = popBackBulk(&pool, m, M, parents); // HERE
 
-    if (poolSize >= m)
+    if (poolSize >= m) // HERE
     {
       clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       int sum = 0;
@@ -156,13 +154,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
         sum += diff;
         sumOffSets[i] = sum;
 
-        if (jobs - lim < 0)
-          printf("ERROR\n");
-        int F = (lb == 1) ? flop_lb1(jobs, machines, lim) : flop_lb2(jobs, machines, lim);
-        int per_inv = (lb == 1) ? bytes_per_inv_lb1(jobs, machines) : bytes_per_inv_lb2(jobs, machines, lim);
-        // each parent node issues (N - lim) bound calls:
-        totalFlops += (jobs - lim) * F;
-        totalBytes += (jobs - lim) * per_inv;
+        // if (jobs - lim < 0)
+        //   printf("ERROR\n");
+        // int F = (lb == 1) ? flop_lb1(jobs, machines, lim) : flop_lb2(jobs, machines, lim);
+        // int per_inv = (lb == 1) ? bytes_per_inv_lb1(jobs, machines) : bytes_per_inv_lb2(jobs, machines, lim);
+        // // each parent node issues (N - lim) bound calls:
+        // totalFlops += (jobs - lim) * F;
+        // totalBytes += (jobs - lim) * per_inv;
       }
       const int numBounds = sum;
       const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
@@ -189,8 +187,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
         each task generates and inserts its children nodes to the pool.
       */
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
-      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
-      pushBackBulkFree(&pool, children, indexChildren);
+      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren); // HERE
+      pushBackBulk(&pool, children, indexChildren); // HERE
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
       timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
 
@@ -203,16 +201,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-  double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
-  double AI = (double)totalFlops / (double)totalBytes;
+  //double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
+  //double AI = (double)totalFlops / (double)totalBytes;
 
-  printf("\nSearch on GPU completed pool.capacity = %d\n", pool.capacity);
+  printf("\nSearch on GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
-  printf("Achieved GFLOPS: %f\n", achievedGOPS);
-  printf("Arithmetic Intensity: %f\n", AI);
-  printf("Time in Generate Children: %f\n", timeGenChildren);
+  //printf("Achieved GFLOPS: %f\n", achievedGOPS);
+  //printf("Arithmetic Intensity: %f\n", AI);
+  //printf("Time in Generate Children: %f\n", timeGenChildren);
 
   /*
     Step 3: We complete the depth-first search on CPU.
@@ -222,7 +220,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBackFree(&pool, &hasWork);
+    Node parent = popBack(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -248,6 +246,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   // Freeing memory for host
   free(parents);
+  free(children);
   free(bounds);
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
@@ -257,7 +256,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
-  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall);
+  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall, timeGenChildren);
   printf("\nExploration terminated.\n");
 }
 
