@@ -28,7 +28,7 @@ Implementation of PFSP Statistic Storage and Analysis.
 
 void print_results_file_single_gpu(const int inst, const int lb, const int optimum,
                                    const unsigned long long int exploredTree, const unsigned long long int exploredSol,
-                                   const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
+                                   const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall, double timeGenChildren)
 {
     FILE *file = fopen("singlegpu.csv", "a");
 
@@ -40,16 +40,16 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
         long size = ftell(file);
         if (size == 0)
         {
-            fprintf(file, "instance_id,lower_bound,optimum,total_time,memcpy_time,cuda_malloc_time,kernel_call_time,explored_tree,explored_sol\n");
+            fprintf(file, "instance_id,lower_bound,optimum,total_time,memcpy_time,cuda_malloc_time,kernel_call_time,gen_children_time,explored_tree,explored_sol\n");
         }
         header_written = 1;
     }
 
     // Write data
     fprintf(file,
-            "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%llu,%llu\n",
+            "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%llu,%llu\n",
             inst, lb, optimum,
-            timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall,
+            timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeGenChildren,
             exploredTree, exploredSol);
 
     fclose(file);

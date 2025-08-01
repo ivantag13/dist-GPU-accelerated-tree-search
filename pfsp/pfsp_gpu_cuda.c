@@ -25,12 +25,12 @@
 #include "../common/util.h"
 #include "../common/gpu_util.cuh"
 
-
 /*******************************************************************************
 Implementation of the parallel single-GPU PFSP search.
 *******************************************************************************/
 void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
-                 unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall)
+                 unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc,
+                 double *timeKernelCall, double *timeGenChildren)
 {
   gpu_info();
 
@@ -127,10 +127,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   *timeCudaMalloc = (endCudaMalloc.tv_sec - startCudaMalloc.tv_sec) + (endCudaMalloc.tv_nsec - startCudaMalloc.tv_nsec) / 1e9;
 
   // int counter = 0;
-  int totalFlops = 0;
-  int totalBytes = 0;
-  int indexChildren;
-  double timeGenChildren = 0;
+  // int totalFlops = 0;
+  // int totalBytes = 0;
 
   while (1)
   {
@@ -144,10 +142,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       int sum = 0;
       int diff;
       int i, j;
-      int lim;
+      // int lim;
       for (i = 0; i < poolSize; i++)
       {
-        lim = parents[i].limit1 + 1;
+        // lim = parents[i].limit1 + 1;
         diff = jobs - parents[i].depth;
         for (j = 0; j < diff; j++)
           nodeIndex[j + sum] = i;
@@ -187,10 +185,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
         each task generates and inserts its children nodes to the pool.
       */
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
+      int indexChildren;
       generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren); // HERE
-      pushBackBulk(&pool, children, indexChildren); // HERE
+      pushBackBulk(&pool, children, indexChildren);                                                                         // HERE
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
-      timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
+      *timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
 
       // counter++;
     }
@@ -201,16 +200,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-  //double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
-  //double AI = (double)totalFlops / (double)totalBytes;
+  // double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
+  // double AI = (double)totalFlops / (double)totalBytes;
 
   printf("\nSearch on GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
-  //printf("Achieved GFLOPS: %f\n", achievedGOPS);
-  //printf("Arithmetic Intensity: %f\n", AI);
-  //printf("Time in Generate Children: %f\n", timeGenChildren);
+  // printf("Achieved GFLOPS: %f\n", achievedGOPS);
+  // printf("Arithmetic Intensity: %f\n", AI);
 
   /*
     Step 3: We complete the depth-first search on CPU.
@@ -256,7 +254,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
-  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall, timeGenChildren);
+  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall, *timeGenChildren);
   printf("\nExploration terminated.\n");
 }
 
@@ -277,13 +275,13 @@ int main(int argc, char *argv[])
   unsigned long long int exploredTree = 0;
   unsigned long long int exploredSol = 0;
 
-  double elapsedTime, timeCudaMemCpy = 0, timeCudaMalloc = 0, timeKernelCall = 0;
+  double elapsedTime, timeCudaMemCpy = 0, timeCudaMalloc = 0, timeKernelCall = 0, timeGenChildren = 0;
 
-  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeCudaMemCpy, &timeCudaMalloc, &timeKernelCall);
+  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeCudaMemCpy, &timeCudaMalloc, &timeKernelCall, &timeGenChildren);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file_single_gpu(inst, lb, optimum, exploredTree, exploredSol, elapsedTime, timeCudaMemCpy, timeCudaMalloc, timeKernelCall);
+  print_results_file_single_gpu(inst, lb, optimum, exploredTree, exploredSol, elapsedTime, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeGenChildren);
 
   return 0;
 }

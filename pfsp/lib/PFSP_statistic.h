@@ -15,7 +15,7 @@ extern "C"
 
     void print_results_file_single_gpu(const int inst, const int lb, const int optimum,
                                        const unsigned long long int exploredTree, const unsigned long long int exploredSol,
-                                       const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall);
+                                       const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall, double timeGenChildren);
 
     void print_results_file_multi_gpu(
         const int inst, const int lb, const int D, int ws, const int optimum,
