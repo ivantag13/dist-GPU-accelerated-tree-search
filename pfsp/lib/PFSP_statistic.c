@@ -30,7 +30,7 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
                                    const unsigned long long int exploredTree, const unsigned long long int exploredSol,
                                    const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall)
 {
-    FILE *file = fopen("data/singlegpu.csv", "a");
+    FILE *file = fopen("singlegpu.csv", "a");
 
     // Optional: add CSV header only once (check if file is empty)
     static int header_written = 0;
@@ -63,7 +63,7 @@ void print_results_file_multi_gpu(
     double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination,
     double *timePoolOps, double *timeGenChildren)
 {
-    FILE *file = fopen("data/multigpu.csv", "a");
+    FILE *file = fopen("multigpu.csv", "a");
 
     // Write header only once
     static int header_written = 0;
@@ -112,7 +112,7 @@ void print_results_file_dist_multi_gpu(
     unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
     double *timeKernelCall, double *timeIdle, double *workloadProc)
 {
-    FILE *file = fopen("data/dist_multigpu.csv", "a");
+    FILE *file = fopen("dist_multigpu.csv", "a");
 
     // Write header if file is new
     static int header_written = 0;
