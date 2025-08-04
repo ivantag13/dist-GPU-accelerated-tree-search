@@ -10,6 +10,7 @@ extern "C"
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 
   /*******************************************************************************
@@ -46,9 +47,11 @@ extern "C"
 
   int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents);
 
+  int popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, Node *parents);
+
   int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents);
 
-  Node *popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, int *Half);
+  int popBackBulkHalfFree(SinglePool_atom *pool, const int m, const int M, Node *parents);
 
   Node popFrontFree(SinglePool_atom *pool, int *hasWork);
 
