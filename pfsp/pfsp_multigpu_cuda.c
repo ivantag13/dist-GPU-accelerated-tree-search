@@ -149,7 +149,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // Allocating parents vector on CPU and GPU
     // TODO: look single-GPU file remark!
     Node *parents = (Node *)malloc(M * sizeof(Node));
-    Node *stolenNodes = (Node *)malloc(M * sizeof(Node));
+    Node *stolenNodes = (Node *)malloc(5 * M * sizeof(Node));
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
@@ -273,21 +273,23 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
                 { // get the lock
                   int size = victim->size;
-
                   if (size >= 2 * m)
                   {
                     // Node stolenNodes[M];
-                    int stolenNodesSize = popBackBulkFree(victim, m, M, stolenNodes);
+                    // Higher value for parameter M allows real application of steal-half strategy
+                    int stolenNodesSize = popBackBulkHalfFree(victim, m, 5 * M, stolenNodes);
                     // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
 
-                    if (stolenNodesSize == 0)
+                    // WARNING: attention to what stolenNodesSize receive from BulkHalf functions
+                    if (stolenNodesSize < m)
                     {                                       // safety check
                       atomic_store(&(victim->lock), false); // reset lock
-                      printf("\nDEADCODE\n");
+                      printf("\nThread [%d] DEADCODE\n", gpuID);
                       exit(-1);
                     }
 
                     startTimePoolOps = omp_get_wtime();
+                    // WARNING: what we push back to pool from StolenNodes should be valid unprocessed work
                     pushBackBulk(pool_loc, stolenNodes, stolenNodesSize); // necessary lock operation
                     endTimePoolOps = omp_get_wtime();
                     timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
@@ -295,8 +297,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     steal = true;
                     nSSteal++;
                     atomic_store(&(victim->lock), false); // reset lock
-                    // endTimeIdle = omp_get_wtime();
-                    // timeIdle[gpuID] += endTimeIdle - startTimeIdle;
+
                     goto WS0; // Break out of WS0 loop
                   }
 
