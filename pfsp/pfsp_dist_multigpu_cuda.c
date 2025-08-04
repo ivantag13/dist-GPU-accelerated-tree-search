@@ -28,7 +28,7 @@
 // #include "../common/gpu_util.cuh"
 
 /******************************************************************************
-Create Node MPI data type
+PFSP MPI Library
 ******************************************************************************/
 
 void create_mpi_node_type(MPI_Datatype *mpi_node_type)
@@ -42,6 +42,27 @@ void create_mpi_node_type(MPI_Datatype *mpi_node_type)
   MPI_Datatype types[3] = {MPI_UINT8_T, MPI_INT, MPI_INT};
   MPI_Type_create_struct(3, blocklengths, offsets, types, mpi_node_type);
   MPI_Type_commit(mpi_node_type);
+}
+
+int globalTermination(int commSize, int D, SinglePool_atom *multiPool, int *poolSizes_all, int m)
+{
+  int termination_flag = 0;
+  int global_flags[commSize];
+  for (int i = 0; i < D; i++)
+  {
+    if (multiPool[i].size >= m || poolSizes_all[i] >= m)
+      termination_flag = 1; // If still work available
+  }
+  MPI_Allgather(&termination_flag, 1, MPI_INT, global_flags, 1, MPI_INT, MPI_COMM_WORLD);
+  termination_flag = 0;
+  for (int i = 0; i < commSize; i++)
+    termination_flag += global_flags[i];
+
+  // TODO: poolSizes_all has to be rechecked? No, because once recovered this value is not set to zero after work done on GPU
+  if (termination_flag == 0)
+    return 1;
+  else
+    return 0;
 }
 
 /***********************************************************************************
@@ -186,7 +207,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       pool_loc = &multiPool[gpuID];
     int best_l = *best;
     bool taskState = BUSY;
-    bool expected = false;
 
     // Each shared memory pool gets its chunk
     if (gpuID != D)
@@ -206,7 +226,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // Allocating parents vector on CPU and GPU
     Node *parents = (Node *)malloc(M * sizeof(Node));
-    Node *stolenNodes = (Node *)malloc(M * sizeof(Node));
+    Node *stolenNodes = (Node *)malloc(5 * M * sizeof(Node));
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     cudaMalloc((void **)&parents_d, M * sizeof(Node));
@@ -225,14 +245,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int *bounds_d;
     cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
-    int indexChildren;
-
 #pragma omp barrier
 
-    int termination_flag = 1;
-    int global_flags[commSize];
     int counter = 0;
-
     // DEBUGGING
     // printf("From Proc[%d] Thread[%d] Before While Loop\n", MPIRank, gpuID);
 
@@ -241,181 +256,94 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       counter++;
       // Distributed Termination Flag reached, break from distributed multi-threaded environment
       if (global_termination_flag && w != 0)
-      {
-        // DEBUGGING
-        // printf("From Proc[%d] Thread[%d] Global Termination Reached\n", MPIRank, gpuID);
         break;
-      }
 
       // Work Sharing by Last Thread
       if (gpuID == D && w == 1)
       {
-        // Termination Detection of GPU-accelerated step
-        termination_flag = 0;
+        global_termination_flag = globalTermination(commSize, D, multiPool, poolSizes_all, m);
 
-        // Check multiPool sizes
-        for (int i = 0; i < D; i++)
-        {
-          if (multiPool[i].size > m || poolSizes_all[i] > 0)
-            termination_flag = 1; // If still work available
-        }
-
-        // Check all locale termination flags
-        MPI_Allgather(&termination_flag, 1, MPI_INT, global_flags, 1, MPI_INT, MPI_COMM_WORLD);
-        int termination = 0;
-        for (int i = 0; i < commSize; i++)
-          termination += global_flags[i];
-
-        // Warning: poolSizes_all has to be rechecked?
-        // int sumPoolSizes = 0;
-        // for (int i = 0; i < D; i++)
-        //   sumPoolSizes += poolSizes_all[i];
-        if (termination == 0) // || sumPoolSizes == 0)
-          global_termination_flag = 1;
-
-        // If no Termination, we proceed to work sharing/work stealing
+        // No global termination, then work sharing
         if (!global_termination_flag)
         {
-          // Step 1 : Determine and allocate amount for shared data
-          Node *sharedNodes = NULL;
-          int sharedSize = 0;
-          int halfSizes;
+          // Step 1 : Try to recover work to share
+          Node *sendNodes = (Node *)malloc(2 * M * sizeof(Node));
+          int sendNodesSize;
           int victims[D];
           permute(victims, D);
           for (int j = 0; j < D; j++)
           {
-            Node *sharedNodesPartial;
-            sharedNodesPartial = popBackBulkHalf(&multiPool[victims[j]], m, M, &halfSizes);
-
-            // If halfSizes > 0, there is local data to share
-            if (halfSizes > 0)
+            // TODO: Should here we use the Half one??
+            sendNodesSize = popBackBulk(&multiPool[victims[j]], m, 2 * M, sendNodes);
+            if (sendNodesSize >= m)
             {
-              if (sharedNodes == NULL)
-                sharedNodes = (Node *)malloc(halfSizes * sizeof(Node));
-              else
-                sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
-
-              // Optimization(?)
-              // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
-              for (int k = 0; k < halfSizes; k++)
-                sharedNodes[sharedSize + k] = sharedNodesPartial[k];
-              sharedSize += halfSizes;
-              free(sharedNodesPartial);
+              nStealsProc[MPIRank]++;
               break;
             }
+            else
+              sendNodesSize = 0;
           }
-          if (sharedSize > 0)
-            nStealsProc[MPIRank]++;
+          // sendNodesSize >= m ?: sendNodesSize *= 0;
 
+          // Step 2: Gather the sizes of the shared data from all processess and compute their displacements
           int sendCounts[commSize];
           int recvCounts[commSize];
           int recvDispls[commSize];
-
-          // Step 2: Gather the sizes of the shared data (sharedSize) from all processess
-          MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
-
-          // DEBUGGING
-          //  if (counter % 100 == 0)
-          //    printf("Proc[%d] sharedSize = %d at counter[%d]\n", MPIRank, sharedSize, counter);
-
-          // Step 3: Compute displacements for the received data
-          int totalReceived = 0;
+          int recvNodesSize = 0;
+          MPI_Allgather(&sendNodesSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
           for (int i = 0; i < commSize; i++)
           {
             recvCounts[i] = sendCounts[i];
-            recvDispls[i] = totalReceived;
-            totalReceived += recvCounts[i];
+            recvDispls[i] = recvNodesSize;
+            recvNodesSize += recvCounts[i];
           }
 
           // DEBUGGING
           // if (counter % 100 == 0)
           //   printf("Proc[%d] totalReceived = %d at counter[%d]\n", MPIRank, totalReceived, counter);
 
-          // Step 4: Allocate buffer to store all received shared data
-          Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
-          if (receivedNodes == NULL)
-          {
-            fprintf(stderr, "Proc[%d] Thread[%d] Memory allocation failed for receivedNodes\n", MPIRank, gpuID);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-          }
+          // Step 3: Gather all shared nodes into the recvNodes buffer
+          Node *recvNodes = (Node *)malloc(recvNodesSize * sizeof(Node));
+          MPI_Allgatherv(sendNodes, sendNodesSize, myNode, recvNodes, recvCounts, recvDispls, myNode, MPI_COMM_WORLD);
 
-          // Step 5: Gather all shared data into the receivedNodes buffer
-          MPI_Allgatherv(sharedNodes, sharedSize, myNode,
-                         receivedNodes, recvCounts, recvDispls, myNode,
-                         MPI_COMM_WORLD);
-
-          // Step 6 : Reincorporate shared nodes into the parents vector
-          int nodesPerProcess = totalReceived / commSize; // Number of nodes each process will recover from every other process
-          int remainder = totalReceived % commSize;       // Remainder to handle uneven distribution
+          // Step 4 : Reincorporate shared nodes into OpenMP thread 0 pool
+          int nodesPerProcess = recvNodesSize / commSize; // Number of nodes each process will recover from every other process
+          int remainder = recvNodesSize % commSize;       // Remainder to handle uneven distribution
 
           // Nodes process per each process
-          Node *insertNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
+          Node *insNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
 
           int added = 0;
           for (int k = 0; k < nodesPerProcess; k++)
           {
-            insertNodes[k] = receivedNodes[k * commSize + MPIRank];
+            insNodes[k] = recvNodes[k * commSize + MPIRank];
             added++;
           }
           // Remainder per each process (if any)
           if (remainder > 0 && MPIRank < remainder)
           {
-            insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * commSize + MPIRank];
+            insNodes[nodesPerProcess] = recvNodes[nodesPerProcess * commSize + MPIRank];
             added++;
           }
 
-          // DEBUGGING
-          // if (counter % 100 == 0)
-          //   printf("Proc[%d] added = %d at counter[%d]\n", MPIRank, added, counter);
-
-          pushBackBulk(&multiPool[0], insertNodes, added);
-
-          // Free allocated memory
-          free(sharedNodes);
-          free(receivedNodes);
+          pushBackBulk(&multiPool[0], insNodes, added);
+          free(sendNodes);
+          free(recvNodes);
+          free(insNodes);
         }
       }
 
       // Work Stealing by Last Thread
       if (gpuID == D && w == 2)
       {
-        // Termination Detection of GPU-accelerated step
-        termination_flag = 0;
-
-        // Check multiPool sizes
-        for (int i = 0; i < D; i++)
-        {
-          if (multiPool[i].size > m || poolSizes_all[i] > 0)
-            termination_flag = 1;
-        }
-
-        MPI_Allgather(&termination_flag, 1, MPI_INT, global_flags, 1, MPI_INT, MPI_COMM_WORLD);
-
-        int termination = 0;
-        for (int i = 0; i < commSize; i++)
-          termination += global_flags[i];
-
-        // Warning: poolSizes_all has to be rechecked?
-        // int sumPoolSizes = 0;
-        // for (int i = 0; i < D; i++)
-        //   sumPoolSizes += poolSizes_all[i];
-        if (termination == 0) // || sumPoolSizes == 0)
-          global_termination_flag = 1;
+        global_termination_flag = globalTermination(commSize, D, multiPool, poolSizes_all, m);
 
         // If no Termination, we proceed to work sharing/work stealing
         if (!global_termination_flag)
         {
-          // Step 1: Check if any process needs work (below threshold)
-          // int threshold = commSize * 2 * m * D;
+          // Step 1: Share info on needy MPI processes
           int needs_work = local_need;
-          // for (int i = 0; i < D; i++)
-          //{
-          //   if (multiPool[i].size > threshold)
-          //     needs_work = 0;
-          // }
           int all_needs_work[commSize];
-
-          // Exchange information about work need
           MPI_Allgather(&needs_work, 1, MPI_INT, all_needs_work, 1, MPI_INT, MPI_COMM_WORLD);
 
           // Count how many processes need work
@@ -427,80 +355,54 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           }
 
           // Step 2: Determine how much to give to steal request (if this process has work)
-          Node *sharedNodes = NULL;
-          int sharedSize = 0;
-          int halfSizes;
-          // Only proceed if some (but not all) processes need work
-          if (needy_count > 0 && needy_count < commSize)
+          Node *sendNodes = (Node *)malloc(M * sizeof(Node));
+          int sendNodesSize = 0;
+          //  Only proceed if some (but not all) processes need work
+          if (needy_count > 0 && needy_count < commSize && !needs_work)
           {
-            if (!needs_work)
+            int victims[D];
+            permute(victims, D);
+            for (int j = 0; j < D; j++)
             {
-              int victims[D];
-              permute(victims, D);
-              for (int j = 0; j < D; j++)
-              {
-                Node *sharedNodesPartial;
-                sharedNodesPartial = popBackBulkHalf(&multiPool[victims[j]], m, M, &halfSizes);
+              sendNodesSize = popBackBulk(&multiPool[victims[j]], m, M, sendNodes);
 
-                // If halfSizes > 0, there is local data to share
-                if (halfSizes > 0)
-                {
-                  if (sharedNodes == NULL)
-                    sharedNodes = (Node *)malloc(halfSizes * sizeof(Node));
-                  else
-                    sharedNodes = (Node *)realloc(sharedNodes, (sharedSize + halfSizes) * sizeof(Node));
-
-                  // Optimization (?)
-                  // memcpy(sharedNodes, parents + (poolSize - halfSize), halfSize * sizeof(Node));
-                  for (int k = 0; k < halfSizes; k++)
-                    sharedNodes[sharedSize + k] = sharedNodesPartial[k];
-                  sharedSize += halfSizes;
-                  free(sharedNodesPartial);
-                  break;
-                }
-              }
+              if (sendNodesSize >= m)
+                break;
+              else
+                sendNodesSize = 0;
             }
           }
+
+          // // DEBUGGING
+          // if (counter % 100 == 0)
+          //   printf("Proc[%d] sendNodesSize[%d] Counter[%d]\n", MPIRank, sendNodesSize, counter);
 
           // Step 3: Gather the sizes of the shared data from all processes
           int sendCounts[commSize];
           int recvCounts[commSize];
           int recvDispls[commSize];
-
-          // Each process sends its sharedSize to all other processes
-          MPI_Allgather(&sharedSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
-
-          // Step 4: Compute displacements for the received data
-          int totalReceived = 0;
+          int recvNodesSize = 0;
+          MPI_Allgather(&sendNodesSize, 1, MPI_INT, sendCounts, 1, MPI_INT, MPI_COMM_WORLD);
           for (int i = 0; i < commSize; i++)
           {
             recvCounts[i] = sendCounts[i];
-            recvDispls[i] = totalReceived;
-            totalReceived += recvCounts[i];
+            recvDispls[i] = recvNodesSize;
+            recvNodesSize += recvCounts[i];
           }
 
-          // Step 5: Allocate a buffer to store all received data
-          Node *receivedNodes = (Node *)malloc(totalReceived * sizeof(Node));
-          if (receivedNodes == NULL)
-          {
-            fprintf(stderr, "Proc[%d] Thread[%d] Memory allocation failed for receivedNodes\n", MPIRank, gpuID);
-            MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
-          }
-
-          // Step 6: Gather all data into the receivedNodes buffer
-          MPI_Allgatherv(sharedNodes, sharedSize, myNode,
-                         receivedNodes, recvCounts, recvDispls, myNode,
-                         MPI_COMM_WORLD);
+          // Step 4: Gather all shared nodes into the recvNodes buffer
+          Node *recvNodes = (Node *)malloc(recvNodesSize * sizeof(Node));
+          MPI_Allgatherv(sendNodes, sendNodesSize, myNode, recvNodes, recvCounts, recvDispls, myNode, MPI_COMM_WORLD);
 
           // Step 6: Redistribute nodes (only for processes that needed work)
-          if (needs_work && totalReceived > 0)
+          if (needs_work && recvNodesSize > 0)
           {
             nStealsProc[MPIRank]++;
-            int nodesPerProcess = totalReceived / needy_count; // Number of nodes each process will recover from every other process
-            int remainder = totalReceived % needy_count;       // Remainder to handle uneven distribution
+            int nodesPerProcess = recvNodesSize / needy_count; // Number of nodes each process will recover from every other process
+            int remainder = recvNodesSize % needy_count;       // Remainder to handle uneven distribution
 
             // Nodes process per each process
-            Node *insertNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
+            Node *insNodes = (Node *)malloc((nodesPerProcess + remainder) * sizeof(Node));
 
             int added = 0;
             // Calculate position in the list of needy processes
@@ -513,13 +415,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             // Nodes recovered by this needy process
             for (int k = 0; k < nodesPerProcess; k++)
             {
-              insertNodes[k] = receivedNodes[k * needy_count + needy_position];
+              insNodes[k] = recvNodes[k * needy_count + needy_position];
               added++;
             }
             // Remainder of nodes recovered per each process (if any)
             if (remainder > 0 && needy_position < remainder)
             {
-              insertNodes[nodesPerProcess] = receivedNodes[nodesPerProcess * needy_count + needy_position];
+              insNodes[nodesPerProcess] = recvNodes[nodesPerProcess * needy_count + needy_position];
               added++;
             }
 
@@ -543,28 +445,25 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             // pushBackBulkFree(&multiPool[nbPool - 1], insertNodes + (nodesPerPool * (nbPool - 1)), nodesPerPool + remainderPool);
             // atomic_store(&eachTaskState[nbPool - 1], BUSY);
 
-            pushBackBulk(&multiPool[0], insertNodes, added);
+            pushBackBulk(&multiPool[0], insNodes, added);
             atomic_store(&eachTaskState[0], BUSY);
             local_need = 0;
-            free(insertNodes);
+            free(insNodes);
           }
-
-          // Free allocated memory
-          free(sharedNodes);
-          free(receivedNodes);
+          free(sendNodes);
+          free(recvNodes);
         }
       }
 
       if (gpuID != D)
       {
-        /*
-          Each task gets its parenst nodes from the pool
-        */
+        // Each task gets its parents nodes from the pool
+
         // counter++;
         int poolSize = popBackBulk(pool_loc, m, M, parents);
         poolSizes_all[gpuID] = poolSize;
 
-        if (poolSize > 0)
+        if (poolSize >= m)
         {
           if (taskState == IDLE)
           {
@@ -597,9 +496,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           timeLocalKernelCall[gpuID] += endKernelCall - startKernelCall;
           cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
 
-          /*
-            Each task generates and inserts its children nodes to the pool.
-          */
+          // Each task generates and inserts its children nodes to the pool.
+          int indexChildren;
           generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
           pushBackBulk(pool_loc, children, indexChildren);
         }
@@ -611,6 +509,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           bool steal = false;
           int victims[D];
           permute(victims, D);
+          bool expected;
 
           while (tries < D && steal == false)
           { // WS0 loop
@@ -630,33 +529,24 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
                 { // get the lock
                   int size = victim->size;
-                  int stolenNodesSize;
-
                   if (size >= 2 * m)
                   {
-                    stolenNodesSize = popBackBulkFree(victim, m, M, stolenNodes);
+                    int stolenNodesSize = popBackBulkHalfFree(victim, m, 5 * M, stolenNodes);
 
-                    if (stolenNodesSize == 0)
+                    if (stolenNodesSize < m)
                     {                                       // safety check
                       atomic_store(&(victim->lock), false); // reset lock
-                      printf("\nDEADCODE\n");
+                      printf("\nProc[%d] Thread[%d] DEADCODE\n", MPIRank, gpuID);
                       exit(-1);
                     }
-
-                    /* for i in 0..#(size/2) {
-                      pool_loc.pushBack(p[i]);
-                    } */
 
                     pushBackBulk(pool_loc, stolenNodes, stolenNodesSize);
 
                     steal = true;
                     nSSteal++;
                     atomic_store(&(victim->lock), false); // reset lock
-                    endTimeIdle = omp_get_wtime();
-                    timeIdleDevice[gpuID] += endTimeIdle - startTimeIdle;
-                    goto WS0; // Break out of WS0 loop
+                    goto WS0;                             // Break out of WS0 loop
                   }
-
                   atomic_store(&(victim->lock), false); // reset lock
                   break;                                // Break out of WS1 loop
                 }
@@ -667,9 +557,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
             tries++;
           }
+        WS0:
           endTimeIdle = omp_get_wtime();
           timeIdleDevice[gpuID] += endTimeIdle - startTimeIdle;
-        WS0:
           if (steal == false)
           {
             // termination
@@ -722,6 +612,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // OpenMP environment freeing variables
     cudaFree(parents_d);
     cudaFree(bounds_d);
+    cudaFree(sumOffSets_d);
+    cudaFree(nodeIndex_d);
     cudaFree(p_times_d);
     cudaFree(min_heads_d);
     cudaFree(min_tails_d);
@@ -731,7 +623,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     cudaFree(machine_pairs_2_d);
     cudaFree(machine_pair_order_d);
     free(parents);
+    free(children);
+    free(stolenNodes);
     free(bounds);
+    free(sumOffSets);
+    free(nodeIndex);
 
 #pragma omp critical
     {
@@ -742,7 +638,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         {
           int hasWork = 0;
 
-          pushBack(&pool_lloc, popBack(pool_loc, &hasWork));
+          pushBackFree(&pool_lloc, popBackFree(pool_loc, &hasWork));
           if (!hasWork)
             break;
         }
@@ -866,7 +762,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBack(&pool_lloc, &hasWork);
+    Node parent = popBackFree(&pool_lloc, &hasWork);
     if (!hasWork)
       break;
     decompose(jobs, lb, best, lbound1, lbound2, parent, &finalLocaleExpTree, &finalLocaleExpSol, &pool_lloc);
