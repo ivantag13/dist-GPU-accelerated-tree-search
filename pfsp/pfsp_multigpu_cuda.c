@@ -39,7 +39,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   int machines = taillard_get_nb_machines(inst);
 
   // Starting pool
-  Node root, parent;
+  Node root;
   initRoot(&root, jobs);
 
   SinglePool_atom pool;
@@ -74,12 +74,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     a sufficiently large amount of work for GPU computation.
   */
 
-  int hasWork;
   while (pool.size < D * m)
   {
     // CPU side
-    hasWork = 0;
-    parent = popFrontFree(&pool, &hasWork);
+    int hasWork = 0;
+    Node parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -148,6 +147,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
 
     // Allocating parents vector on CPU and GPU
+    // TODO: look single-GPU file remark!
     Node *parents = (Node *)malloc(M * sizeof(Node));
     Node *stolenNodes = (Node *)malloc(M * sizeof(Node));
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
@@ -171,15 +171,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     endCudaMalloc = omp_get_wtime();
     timeCudaMalloc[gpuID] = endCudaMalloc - startCudaMalloc;
 
-    int indexChildren, poolSize, numBounds, nbBlocks;
-
     while (1)
     {
       /*
         Each task gets its parenst nodes from the pool
       */
       startTimePoolOps = omp_get_wtime();
-      poolSize = popBackBulk(pool_loc, m, M, parents);
+      // Node parents[M];
+      int poolSize = popBackBulk(pool_loc, m, M, parents);
       endTimePoolOps = omp_get_wtime();
       timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
 
@@ -195,6 +194,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         int sum = 0;
         int diff;
         int i, j;
+        // int sumOffSets[poolSize];
+        // int nodeIndex[poolSize * jobs];
         for (i = 0; i < poolSize; i++)
         {
           diff = jobs - parents[i].depth;
@@ -204,8 +205,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           sumOffSets[i] = sum;
         }
 
-        numBounds = sum;
-        nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
+        int numBounds = sum;
+        int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
 
         cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
         cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
@@ -220,6 +221,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         timeKernelCall[gpuID] += endKernelCall - startKernelCall;
 
         startCudaMemCpy = omp_get_wtime();
+        // int bounds[numBounds];
         cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
         endCudaMemCpy = omp_get_wtime();
         timeCudaMemCpy[gpuID] += endCudaMemCpy - startCudaMemCpy;
@@ -228,6 +230,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           Each task generates and inserts its children nodes to the pool.
         */
         startGenChildren = omp_get_wtime();
+        int indexChildren;
+        // Node children[numBounds];
         generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
         endGenChildren = omp_get_wtime();
         timeGenChildren[gpuID] += endGenChildren - startGenChildren;
@@ -247,7 +251,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         {
           // Local work stealing
           startTimeIdle = omp_get_wtime();
-          int tries = 0, size, stolenNodesSize;
+          int tries = 0;
           bool steal = false;
           int victims[D];
           permute(victims, D);
@@ -268,11 +272,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 expected = false;
                 if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
                 { // get the lock
-                  size = victim->size;
+                  int size = victim->size;
 
                   if (size >= 2 * m)
                   {
-                    stolenNodesSize = popBackBulkFree(victim, m, M, stolenNodes);
+                    // Node stolenNodes[M];
+                    int stolenNodesSize = popBackBulkFree(victim, m, M, stolenNodes);
                     // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
 
                     if (stolenNodesSize == 0)
@@ -339,6 +344,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // Freeing variables from OpenMP environment
     cudaFree(parents_d);
     cudaFree(bounds_d);
+    cudaFree(sumOffSets_d);
+    cudaFree(nodeIndex_d);
     cudaFree(p_times_d);
     cudaFree(min_heads_d);
     cudaFree(min_tails_d);
@@ -348,7 +355,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     cudaFree(machine_pairs_2_d);
     cudaFree(machine_pair_order_d);
     free(parents);
+    free(children);
+    free(stolenNodes);
     free(bounds);
+    free(sumOffSets);
+    free(nodeIndex);
 
 #pragma omp critical
     {
@@ -391,14 +402,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
-  printf("Workload per GPU: ");
-  for (int gpuID = 0; gpuID < D; gpuID++)
-    printf("%.2f ", (double)100 * eachExploredTree[gpuID] / ((double)*exploredTree));
-  printf("\n");
-  printf("Time in generate_children : ");
-  for (int i = 0; i < D; i++)
-    printf("%.2f ", timeGenChildren[i]);
-  printf("\n");
+  // printf("Workload per GPU: ");
+  // for (int gpuID = 0; gpuID < D; gpuID++)
+  //   printf("%.2f ", (double)100 * eachExploredTree[gpuID] / ((double)*exploredTree));
+  // printf("\n");
+  // printf("Time in generate_children : ");
+  // for (int i = 0; i < D; i++)
+  //   printf("%.2f ", timeGenChildren[i]);
+  // printf("\n");
 
   /*
     Step 3: We complete the depth-first search on CPU.
