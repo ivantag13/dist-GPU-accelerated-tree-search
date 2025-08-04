@@ -76,7 +76,7 @@ void print_results_file_multi_gpu(
             fprintf(file,
                     "instance_id,nb_device,lower_bound,work_sharing,optimum,total_time,total_tree,total_sol,"
                     "exp_tree_gpu,exp_sol_gpu,gen_children_gpu,steals_gpu,successful_steals_gpu,termination_gpu,"
-                    "kernel_time_gpu,memcpy_time_gpu,malloc_time_gpu,gen_children_time,idle_time_gpu,termination_time_gpu\n");
+                    "kernel_time_gpu,memcpy_time_gpu,malloc_time_gpu,gen_children_time,idle_time_gpu,pool_ops_gpu_time,termination_time_gpu\n");
         }
         header_written = 1;
     }
@@ -97,6 +97,7 @@ void print_results_file_multi_gpu(
     PRINT_DOUBLE_ARRAY(timeCudaMalloc);
     PRINT_DOUBLE_ARRAY(timeGenChildren);
     PRINT_DOUBLE_ARRAY(timeIdle);
+    PRINT_DOUBLE_ARRAY(timePoolOps);
     PRINT_DOUBLE_ARRAY(timeTermination);
 
     // Finalize the row
