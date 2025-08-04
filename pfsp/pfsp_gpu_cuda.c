@@ -104,21 +104,26 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
 
   // Allocating parents vector on CPU and GPU
+  // TODO: rethink dynamic allocation of CPU memory?!
   Node *parents = (Node *)malloc(M * sizeof(Node));
   Node *children = (Node *)malloc(M * jobs * sizeof(Node));
+  // Node parents[M], children[M * jobs];
   Node *parents_d;
   cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
   int *sumOffSets = (int *)malloc(M * sizeof(int));
+  // int sumOffSets[M];
   int *sumOffSets_d;
   cudaMalloc((void **)&sumOffSets_d, M * sizeof(int));
 
   // Allocating bounds vector on CPU and GPU
   int *nodeIndex = (int *)malloc((jobs * M) * sizeof(int));
+  // int nodeIndex[jobs * M];
   int *nodeIndex_d;
   cudaMalloc((void **)&nodeIndex_d, (jobs * M) * sizeof(int));
 
   int *bounds = (int *)malloc((jobs * M) * sizeof(int));
+  // int bounds[jobs * M];
   int *bounds_d;
   cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
@@ -133,8 +138,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   while (1)
   {
     // int poolSize = pool.size;
-    // TODO : fix call of popBackBulkFree to use it here
-    int poolSize = popBackBulk(&pool, m, M, parents); // HERE
+    // Node parents[M];
+    int poolSize = popBackBulkFree(&pool, m, M, parents); // HERE
 
     if (poolSize >= m) // HERE
     {
@@ -142,16 +147,17 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       int sum = 0;
       int diff;
       int i, j;
-      // int lim;
+      // int sumOffSets[poolSize];
+      // int nodeIndex[poolSize * jobs];
       for (i = 0; i < poolSize; i++)
       {
-        // lim = parents[i].limit1 + 1;
         diff = jobs - parents[i].depth;
         for (j = 0; j < diff; j++)
           nodeIndex[j + sum] = i;
         sum += diff;
         sumOffSets[i] = sum;
 
+        // int lim = parents[i].limit1 + 1;
         // if (jobs - lim < 0)
         //   printf("ERROR\n");
         // int F = (lb == 1) ? flop_lb1(jobs, machines, lim) : flop_lb2(jobs, machines, lim);
@@ -177,6 +183,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       *timeKernelCall += (endKernelCall.tv_sec - startKernelCall.tv_sec) + (endKernelCall.tv_nsec - startKernelCall.tv_nsec) / 1e9;
 
       clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
+      // int bounds[numBounds];
       cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
       clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMemCpy);
       *timeCudaMemCpy += (endCudaMemCpy.tv_sec - startCudaMemCpy.tv_sec) + (endCudaMemCpy.tv_nsec - startCudaMemCpy.tv_nsec) / 1e9;
@@ -186,8 +193,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       */
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
       int indexChildren;
+      // Node children[numBounds];
       generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren); // HERE
-      pushBackBulk(&pool, children, indexChildren);                                                                         // HERE
+      pushBackBulkFree(&pool, children, indexChildren);                                                                     // HERE
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
       *timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
 
@@ -218,7 +226,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   while (1)
   {
     int hasWork = 0;
-    Node parent = popBack(&pool, &hasWork);
+    Node parent = popBackFree(&pool, &hasWork);
     if (!hasWork)
       break;
 
@@ -233,6 +241,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   // Freeing memory for device
   cudaFree(parents_d);
   cudaFree(bounds_d);
+  cudaFree(sumOffSets_d);
+  cudaFree(nodeIndex_d);
   cudaFree(p_times_d);
   cudaFree(min_heads_d);
   cudaFree(min_tails_d);
@@ -244,6 +254,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   // Freeing memory for host
   free(parents);
+  free(sumOffSets);
+  free(nodeIndex);
   free(children);
   free(bounds);
 
