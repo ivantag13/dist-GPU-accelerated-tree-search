@@ -18,12 +18,12 @@ extern "C"
                                        const double timer, double timeGpuCpy, double timeGpuMalloc, double timeGpuKer, double timeGenChild);
 
     void print_results_file_multi_gpu(
-        const int inst, const int lb, const int D, int ws, const int optimum,
+        const int inst, const int lb, const int D, int ws, const int optimum, const int m, const int M,
         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
-        unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildren,
-        unsigned long long int *nStealsGPU, unsigned long long int *nSStealsGPU, unsigned long long int *nTerminationGPU,
-        double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination,
-        double *timePoolOps, double *timeGenChildren);
+        unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildGPU,
+        unsigned long long int *nbStealsGPU, unsigned long long int *nbSStealsGPU, unsigned long long int *nbTerminationGPU,
+        double *timeGpuCpy, double *timeGpuMalloc, double *timeGpuKer, double *timeGenChild, double *timePoolOps,
+        double *timeGpuIdle, double *timeTermination);
 
     void print_results_file_dist_multi_gpu(
         const int inst, const int lb, const int D, const int w, const int commSize, const int optimum,

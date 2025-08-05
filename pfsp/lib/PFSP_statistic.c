@@ -54,14 +54,14 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
 
     fclose(file);
 }
-
+  
 void print_results_file_multi_gpu(
-    const int inst, const int lb, const int D, int ws, const int optimum,
+    const int inst, const int lb, const int D, int ws, const int optimum, const int m, const int M,
     const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
-    unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildren,
-    unsigned long long int *nStealsGPU, unsigned long long int *nSStealsGPU, unsigned long long int *nTerminationGPU,
-    double *timeCudaMemCpy, double *timeCudaMalloc, double *timeKernelCall, double *timeIdle, double *timeTermination,
-    double *timePoolOps, double *timeGenChildren)
+    unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildGPU,
+    unsigned long long int *nbStealsGPU, unsigned long long int *nbSStealsGPU, unsigned long long int *nbTerminationGPU,
+    double *timeGpuCpy, double *timeGpuMalloc, double *timeGpuKer, double *timeGenChild, double *timePoolOps,
+    double *timeGpuIdle, double *timeTermination)
 {
     FILE *file = fopen("multigpu.csv", "a");
 
@@ -74,30 +74,30 @@ void print_results_file_multi_gpu(
         if (size == 0)
         {
             fprintf(file,
-                    "instance_id,nb_device,lower_bound,work_sharing,optimum,total_time,total_tree,total_sol,"
-                    "exp_tree_gpu,exp_sol_gpu,gen_children_gpu,steals_gpu,successful_steals_gpu,termination_gpu,"
-                    "kernel_time_gpu,memcpy_time_gpu,malloc_time_gpu,gen_children_time,idle_time_gpu,pool_ops_gpu_time,termination_time_gpu\n");
+                    "instance_id,nb_device,lower_bound,work_sharing,optimum,m,M,total_time,total_tree,total_sol,"
+                    "exp_tree_gpu,exp_sol_gpu,gen_child_gpu,steals_gpu,success_steals_gpu,termination_gpu,"
+                    "gpu_memcpy_time,gpu_malloc_time,gpu_kernel_time,gpu_gen_child_time,pool_ops_time,gpu_idle_time,termination_time\n");
         }
         header_written = 1;
     }
 
     // Write scalar values
-    fprintf(file, "%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
-            inst, D, lb, ws, optimum, timer, exploredTree, exploredSol);
+    fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
+            inst, D, lb, ws, optimum, m, M, timer, exploredTree, exploredSol);
 
     // Arrays
     PRINT_ULL_ARRAY(expTreeGPU);
     PRINT_ULL_ARRAY(expSolGPU);
-    PRINT_ULL_ARRAY(genChildren);
-    PRINT_ULL_ARRAY(nStealsGPU);
-    PRINT_ULL_ARRAY(nSStealsGPU);
-    PRINT_ULL_ARRAY(nTerminationGPU);
-    PRINT_DOUBLE_ARRAY(timeKernelCall);
-    PRINT_DOUBLE_ARRAY(timeCudaMemCpy);
-    PRINT_DOUBLE_ARRAY(timeCudaMalloc);
-    PRINT_DOUBLE_ARRAY(timeGenChildren);
-    PRINT_DOUBLE_ARRAY(timeIdle);
+    PRINT_ULL_ARRAY(genChildGPU);
+    PRINT_ULL_ARRAY(nbStealsGPU);
+    PRINT_ULL_ARRAY(nbSStealsGPU);
+    PRINT_ULL_ARRAY(nbTerminationGPU);
+    PRINT_DOUBLE_ARRAY(timeGpuCpy);
+    PRINT_DOUBLE_ARRAY(timeGpuMalloc);
+    PRINT_DOUBLE_ARRAY(timeGpuKer);
+    PRINT_DOUBLE_ARRAY(timeGenChild);
     PRINT_DOUBLE_ARRAY(timePoolOps);
+    PRINT_DOUBLE_ARRAY(timeGpuIdle);
     PRINT_DOUBLE_ARRAY(timeTermination);
 
     // Finalize the row
