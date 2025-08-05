@@ -29,8 +29,8 @@
 Implementation of the parallel single-GPU PFSP search.
 *******************************************************************************/
 void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
-                 unsigned long long int *exploredSol, double *elapsedTime, double *timeCudaMemCpy, double *timeCudaMalloc,
-                 double *timeKernelCall, double *timeGenChildren)
+                 unsigned long long int *exploredSol, double *elapsedTime, double *timeGpuCpy, double *timeGpuMalloc,
+                 double *timeGpuKer, double *timeGenChild)
 {
   gpu_info();
 
@@ -48,7 +48,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   pushBack(&pool, root);
 
   // Timers
-  struct timespec start, end, startCudaMemCpy, endCudaMemCpy, startCudaMalloc, endCudaMalloc, startKernelCall, endKernelCall, startGenChildren, endGenChildren;
+  struct timespec start, end, startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild;
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
   // Bounding data
@@ -70,12 +70,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
 
   while (pool.size < m)
   {
-    // CPU side
     int hasWork = 0;
     Node parent = popFrontFree(&pool, &hasWork);
     if (!hasWork)
       break;
-
     decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, &pool);
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
@@ -92,7 +90,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   */
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-  clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMalloc);
+  clock_gettime(CLOCK_MONOTONIC_RAW, &startGpuMalloc);
 
   // GPU bounding functions data
   lb1_bound_data lbound1_d;
@@ -127,23 +125,17 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   int *bounds_d;
   cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
-  clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMalloc);
-
-  *timeCudaMalloc = (endCudaMalloc.tv_sec - startCudaMalloc.tv_sec) + (endCudaMalloc.tv_nsec - startCudaMalloc.tv_nsec) / 1e9;
-
-  // int counter = 0;
-  // int totalFlops = 0;
-  // int totalBytes = 0;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &endGpuMalloc);
+  *timeGpuMalloc = (endGpuMalloc.tv_sec - startGpuMalloc.tv_sec) + (endGpuMalloc.tv_nsec - startGpuMalloc.tv_nsec) / 1e9;
 
   while (1)
   {
-    // int poolSize = pool.size;
     // Node parents[M];
-    int poolSize = popBackBulkFree(&pool, m, M, parents, 1); // HERE
+    int poolSize = popBackBulkFree(&pool, m, M, parents, 1);
 
-    if (poolSize > 0) // HERE
+    if (poolSize > 0)
     {
-      clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startGpuCpy);
       int sum = 0;
       int diff;
       int i, j;
@@ -156,15 +148,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
           nodeIndex[j + sum] = i;
         sum += diff;
         sumOffSets[i] = sum;
-
-        // int lim = parents[i].limit1 + 1;
-        // if (jobs - lim < 0)
-        //   printf("ERROR\n");
-        // int F = (lb == 1) ? flop_lb1(jobs, machines, lim) : flop_lb2(jobs, machines, lim);
-        // int per_inv = (lb == 1) ? bytes_per_inv_lb1(jobs, machines) : bytes_per_inv_lb2(jobs, machines, lim);
-        // // each parent node issues (N - lim) bound calls:
-        // totalFlops += (jobs - lim) * F;
-        // totalBytes += (jobs - lim) * per_inv;
       }
       const int numBounds = sum;
       const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
@@ -172,47 +155,42 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
       cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
       cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
-      clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMemCpy);
-      *timeCudaMemCpy += (endCudaMemCpy.tv_sec - startCudaMemCpy.tv_sec) + (endCudaMemCpy.tv_nsec - startCudaMemCpy.tv_nsec) / 1e9;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endGpuCpy);
+      *timeGpuCpy += (endGpuCpy.tv_sec - startGpuCpy.tv_sec) + (endGpuCpy.tv_nsec - startGpuCpy.tv_nsec) / 1e9;
 
       // numBounds is the 'size' of the problem
-      clock_gettime(CLOCK_MONOTONIC_RAW, &startKernelCall);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startGpuKer);
       evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
       cudaDeviceSynchronize();
-      clock_gettime(CLOCK_MONOTONIC_RAW, &endKernelCall);
-      *timeKernelCall += (endKernelCall.tv_sec - startKernelCall.tv_sec) + (endKernelCall.tv_nsec - startKernelCall.tv_nsec) / 1e9;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endGpuKer);
+      *timeGpuKer += (endGpuKer.tv_sec - startGpuKer.tv_sec) + (endGpuKer.tv_nsec - startGpuKer.tv_nsec) / 1e9;
 
-      clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startGpuCpy);
       // int bounds[numBounds];
       cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
-      clock_gettime(CLOCK_MONOTONIC_RAW, &endCudaMemCpy);
-      *timeCudaMemCpy += (endCudaMemCpy.tv_sec - startCudaMemCpy.tv_sec) + (endCudaMemCpy.tv_nsec - startCudaMemCpy.tv_nsec) / 1e9;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endGpuCpy);
+      *timeGpuCpy += (endGpuCpy.tv_sec - startGpuCpy.tv_sec) + (endGpuCpy.tv_nsec - startGpuCpy.tv_nsec) / 1e9;
 
-      /*
-        each task generates and inserts its children nodes to the pool.
-      */
-      clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChildren);
+      // each task generates and inserts its children nodes to the pool.
+      clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChild);
       int indexChildren;
       // Node children[numBounds];
-      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren); // HERE
-      pushBackBulkFree(&pool, children, indexChildren);                                                                     // HERE
-      clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChildren);
-      *timeGenChildren += (endGenChildren.tv_sec - startGenChildren.tv_sec) + (endGenChildren.tv_nsec - startGenChildren.tv_nsec) / 1e9;
-
-      // counter++;
+      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
+      pushBackBulkFree(&pool, children, indexChildren);
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChild);
+      *timeGenChild += (endGenChild.tv_sec - startGenChild.tv_sec) + (endGenChild.tv_nsec - startGenChild.tv_nsec) / 1e9;
     }
     else
       break;
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-  // double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
-  // double AI = (double)totalFlops / (double)totalBytes;
-
   printf("\nSearch on GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
+  // double achievedGOPS = (double)totalFlops / (double)(*timeKernelCall * 1e9);
+  // double AI = (double)totalFlops / (double)totalBytes;
   // printf("Achieved GFLOPS: %f\n", achievedGOPS);
   // printf("Arithmetic Intensity: %f\n", AI);
 
@@ -227,16 +205,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
     Node parent = popBackFree(&pool, &hasWork);
     if (!hasWork)
       break;
-
     decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, &pool);
   }
 
-  // Freeing memory for structs
+  // Free Memory
   deleteSinglePool_atom(&pool);
   free_bound_data(lbound1);
   free_johnson_bd_data(lbound2);
-
-  // Freeing memory for device
   cudaFree(parents_d);
   cudaFree(bounds_d);
   cudaFree(sumOffSets_d);
@@ -249,8 +224,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   cudaFree(machine_pairs_1_d);
   cudaFree(machine_pairs_2_d);
   cudaFree(machine_pair_order_d);
-
-  // Freeing memory for host
   free(parents);
   free(sumOffSets);
   free(nodeIndex);
@@ -264,7 +237,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
-  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n", *elapsedTime, *timeCudaMemCpy, *timeCudaMalloc, *timeKernelCall, *timeGenChildren);
+  printf("Times: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n", *elapsedTime, *timeGpuCpy, *timeGpuMalloc, *timeGpuKer, *timeGenChild);
   printf("\nExploration terminated.\n");
 }
 
@@ -285,13 +258,13 @@ int main(int argc, char *argv[])
   unsigned long long int exploredTree = 0;
   unsigned long long int exploredSol = 0;
 
-  double elapsedTime, timeCudaMemCpy = 0, timeCudaMalloc = 0, timeKernelCall = 0, timeGenChildren = 0;
+  double elapsedTime = 0, timeGpuCpy = 0, timeGpuMalloc = 0, timeGpuKer = 0, timeGenChild = 0;
 
-  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeCudaMemCpy, &timeCudaMalloc, &timeKernelCall, &timeGenChildren);
+  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeGpuCpy, &timeGpuMalloc, &timeGpuKer, &timeGenChild);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file_single_gpu(inst, lb, optimum, exploredTree, exploredSol, elapsedTime, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeGenChildren);
+  print_results_file_single_gpu(inst, lb, optimum, exploredTree, exploredSol, elapsedTime, timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild);
 
   return 0;
 }
