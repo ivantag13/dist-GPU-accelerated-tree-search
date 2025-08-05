@@ -45,11 +45,11 @@ extern "C"
 
   Node popBackFree(SinglePool_atom *pool, int *hasWork);
 
-  int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents);
+  int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents, int ratio);
 
   int popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, Node *parents);
 
-  int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents);
+  int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents, int ratio);
 
   int popBackBulkHalfFree(SinglePool_atom *pool, const int m, const int M, Node *parents);
 

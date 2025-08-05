@@ -151,7 +151,7 @@ Node popBackFree(SinglePool_atom *pool, int *hasWork)
 }
 
 // Parallel-safe bulk removal from the end of the deque.
-int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
+int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents, int ratio)
 {
   bool expected;
   while (true)
@@ -159,41 +159,14 @@ int popBackBulk(SinglePool_atom *pool, const int m, const int M, Node *parents)
     expected = false;
     if (atomic_compare_exchange_strong(&(pool->lock), &expected, true))
     {
-      if (pool->size < m)
+      if (pool->size < ratio * m)
       {
         atomic_store(&(pool->lock), false);
-        return pool->size;
+        return 0;
       }
       else
       {
-        int poolSize = MIN(pool->size, M);
-        pool->size -= poolSize;
-        for (int i = 0; i < poolSize; i++)
-          parents[i] = pool->elements[pool->front + pool->size + i];
-        atomic_store(&(pool->lock), false);
-        return poolSize;
-      }
-    }
-  }
-}
-
-// Parallel-safe bulk removal from the end of the deque based on the steal-half strategy.
-int popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, Node *parents)
-{
-  bool expected;
-  while (true)
-  {
-    expected = false;
-    if (atomic_compare_exchange_strong(&(pool->lock), &expected, true))
-    {
-      if (pool->size < 2 * m)
-      {
-        atomic_store(&(pool->lock), false);
-        return pool->size;
-      }
-      else
-      {
-        int poolSize = MIN(pool->size / 2, M);
+        int poolSize = MIN(pool->size / ratio, M);
         pool->size -= poolSize;
         for (int i = 0; i < poolSize; i++)
           parents[i] = pool->elements[pool->front + pool->size + i];
@@ -205,11 +178,11 @@ int popBackBulkHalf(SinglePool_atom *pool, const int m, const int M, Node *paren
 }
 
 // Bulk removal from the end of the deque. Parallel safety is not guaranteed.
-int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
+int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *parents, int ratio)
 {
-  if (pool->size >= m)
+  if (pool->size >= ratio * m)
   {
-    int poolSize = MIN(pool->size, M);
+    int poolSize = MIN(pool->size / ratio, M);
     pool->size -= poolSize;
     for (int i = 0; i < poolSize; i++)
     {
@@ -217,25 +190,7 @@ int popBackBulkFree(SinglePool_atom *pool, const int m, const int M, Node *paren
     }
     return poolSize;
   }
-  return pool->size;
-}
-
-// Bulk removal from the end of the deque based on the steal-half strategy. Parallel safety is not guaranteed.
-int popBackBulkHalfFree(SinglePool_atom *pool, const int m, const int M, Node *parents)
-{
-  if (pool->size < 2 * m){
-    printf("DEADCODE\n");
-    exit(-1);
-    return pool->size;
-  }
-  else
-  {
-    int poolSize = MIN(pool->size / 2, M);
-    pool->size -= poolSize;
-    for (int i = 0; i < poolSize; i++)
-      parents[i] = pool->elements[pool->front + pool->size + i];
-    return poolSize;
-  }
+  return 0;
 }
 
 // Removal from the front of the deque. Parallel safety is not guaranteed.
