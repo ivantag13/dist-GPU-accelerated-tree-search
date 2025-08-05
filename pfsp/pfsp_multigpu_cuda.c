@@ -178,11 +178,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       */
       startTimePoolOps = omp_get_wtime();
       // Node parents[M];
-      int poolSize = popBackBulk(pool_loc, m, M, parents);
+      int poolSize = popBackBulk(pool_loc, m, M, parents, 1);
       endTimePoolOps = omp_get_wtime();
       timePoolOps[gpuID] += endTimePoolOps - startTimePoolOps;
 
-      if (poolSize >= m)
+      if (poolSize > 0)
       {
         if (taskState == IDLE)
         {
@@ -277,11 +277,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                   {
                     // Node stolenNodes[M];
                     // Higher value for parameter M allows real application of steal-half strategy
-                    int stolenNodesSize = popBackBulkHalfFree(victim, m, 5 * M, stolenNodes);
+                    int stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2);
                     // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
 
                     // WARNING: attention to what stolenNodesSize receive from BulkHalf functions
-                    if (stolenNodesSize < m)
+                    if (stolenNodesSize == 0)
                     {                                       // safety check
                       atomic_store(&(victim->lock), false); // reset lock
                       printf("\nThread [%d] DEADCODE\n", gpuID);
