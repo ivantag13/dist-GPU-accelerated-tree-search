@@ -13,9 +13,9 @@ extern "C"
     Data logging functions
     *******************************************************************************/
 
-    void print_results_file_single_gpu(const int inst, const int lb, const int optimum,
+    void print_results_file_single_gpu(const int inst, const int lb, const int optimum, const int m, const int M,
                                        const unsigned long long int exploredTree, const unsigned long long int exploredSol,
-                                       const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall, double timeGenChildren);
+                                       const double timer, double timeGpuCpy, double timeGpuMalloc, double timeGpuKer, double timeGenChild);
 
     void print_results_file_multi_gpu(
         const int inst, const int lb, const int D, int ws, const int optimum,

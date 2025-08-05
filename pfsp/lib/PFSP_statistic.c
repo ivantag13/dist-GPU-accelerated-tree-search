@@ -26,9 +26,9 @@ Implementation of PFSP Statistic Storage and Analysis.
     }                                  \
     fprintf(file, "]\",")
 
-void print_results_file_single_gpu(const int inst, const int lb, const int optimum,
+void print_results_file_single_gpu(const int inst, const int lb, const int optimum, const int m, const int M,
                                    const unsigned long long int exploredTree, const unsigned long long int exploredSol,
-                                   const double timer, double timeCudaMemCpy, double timeCudaMalloc, double timeKernelCall, double timeGenChildren)
+                                   const double timer, double timeGpuCpy, double timeGpuMalloc, double timeGpuKer, double timeGenChild)
 {
     FILE *file = fopen("singlegpu.csv", "a");
 
@@ -40,7 +40,7 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
         long size = ftell(file);
         if (size == 0)
         {
-            fprintf(file, "instance_id,lower_bound,optimum,total_time,memcpy_time,cuda_malloc_time,kernel_call_time,gen_children_time,explored_tree,explored_sol\n");
+            fprintf(file, "instance_id,lower_bound,optimum,total_time,gpu_memcpy_time,gpu_malloc_time,gpu_kernel_time,gen_child_time,explored_tree,explored_sol\n");
         }
         header_written = 1;
     }
@@ -49,7 +49,7 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
     fprintf(file,
             "%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%llu,%llu\n",
             inst, lb, optimum,
-            timer, timeCudaMemCpy, timeCudaMalloc, timeKernelCall, timeGenChildren,
+            timer, timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild,
             exploredTree, exploredSol);
 
     fclose(file);

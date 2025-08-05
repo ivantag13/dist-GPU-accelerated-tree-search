@@ -264,7 +264,7 @@ int main(int argc, char *argv[])
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file_single_gpu(inst, lb, optimum, exploredTree, exploredSol, elapsedTime, timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild);
+  print_results_file_single_gpu(inst, lb, optimum, m, M, exploredTree, exploredSol, elapsedTime, timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild);
 
   return 0;
 }
