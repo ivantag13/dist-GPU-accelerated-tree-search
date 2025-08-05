@@ -139,9 +139,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   {
     // int poolSize = pool.size;
     // Node parents[M];
-    int poolSize = popBackBulkFree(&pool, m, M, parents); // HERE
+    int poolSize = popBackBulkFree(&pool, m, M, parents, 1); // HERE
 
-    if (poolSize >= m) // HERE
+    if (poolSize > 0) // HERE
     {
       clock_gettime(CLOCK_MONOTONIC_RAW, &startCudaMemCpy);
       int sum = 0;
@@ -202,9 +202,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       // counter++;
     }
     else
-    {
       break;
-    }
   }
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
   double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
