@@ -25,6 +25,28 @@
 #include "lib/PFSP_statistic.h"
 #include "../common/util.h"
 
+void checkBest(int *best_l, int *best, _Atomic bool *bestLock)
+{
+  if (*best_l > *best)
+    *best_l = *best;
+  else if (*best_l < *best)
+  {
+    bool expected = false;
+    while (1)
+    {
+      expected = false;
+      if (atomic_compare_exchange_strong(bestLock, &expected, true))
+      {
+        if (*best_l < *best)
+          *best = *best_l;
+        atomic_store(bestLock, false);
+        break;
+      }
+    }
+  }
+  return;
+}
+
 /*******************************************************************************
 Implementation of the parallel multi-GPU PFSP search.
 *******************************************************************************/
@@ -100,13 +122,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   for (int i = 0; i < D; i++)
     initSinglePool_atom(&multiPool[i]);
   double timeDevice[D];
+  int best_l = *best;
 
   startTime = omp_get_wtime();
-  // TODO: implement reduction using omp directives
-#pragma omp parallel num_threads(D) shared(bestLock, eachTaskState, allTasksIdleFlag, pool, multiPool,                                       \
-                                               jobs, machines, lbound1, lbound2, lb, m, M, D, perc, ws, best, exploredTree, exploredSol,     \
-                                               elapsedTime, expTreeGPU, expSolGPU, genChildGPU, nbStealsGPU, nbSStealsGPU, nbTerminationGPU, \
-                                               timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild, timePoolOps, timeGpuIdle, timeTermination, timeDevice)
+#pragma omp parallel num_threads(D) shared(bestLock, eachTaskState, allTasksIdleFlag, pool, multiPool,                                                     \
+                                               jobs, machines, lbound1, lbound2, lb, m, M, D, perc, ws, best, exploredTree, exploredSol,                   \
+                                               elapsedTime, expTreeGPU, expSolGPU, genChildGPU, nbStealsGPU, nbSStealsGPU, nbTerminationGPU,               \
+                                               timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild, timePoolOps, timeGpuIdle, timeTermination, timeDevice) \
+    reduction(min : best_l)
   {
     double startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild,
         startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination;
@@ -117,11 +140,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int endSetDevice = omp_get_wtime();
     timeDevice[gpuID] = endSetDevice - startSetDevice;
 
-    // startPool = omp_get_wtime();
-    // unsigned long long int tree = 0, sol = 0;
+    unsigned long long int tree = 0, sol = 0;
+    int nbSteals = 0, nbSSteals = 0;
     SinglePool_atom *pool_loc;
     pool_loc = &multiPool[gpuID];
-    int best_l = *best;
+    // int best_l = *best;
     bool taskState = BUSY;
 
     roundRobin_distribution(pool_loc, &pool, gpuID, D);
@@ -214,9 +237,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         timeGpuCpy[gpuID] += endGpuCpy - startGpuCpy;
 
         // Each task generates and inserts its children nodes to the pool.
+
         startGenChild = omp_get_wtime();
+        if (best_l != *best)
+          checkBest(&best_l, best, &bestLock);
         int indexChildren;
-        generate_children(parents, children, poolSize, jobs, bounds, &expTreeGPU[gpuID], &expSolGPU[gpuID], &best_l, pool_loc, &indexChildren);
+        generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+        if (best_l != *best)
+          checkBest(&best_l, best, &bestLock);
+
         endGenChild = omp_get_wtime();
         timeGenChild[gpuID] += endGenChild - startGenChild;
 
@@ -248,7 +277,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             { // if not me
               SinglePool_atom *victim;
               victim = &multiPool[victimID];
-              nbStealsGPU[gpuID]++;
+              nbSteals++;
               int nn = 0;
               while (nn < 10)
               { // WS1 loop
@@ -275,7 +304,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     timePoolOps[gpuID] += endPoolOps - startPoolOps;
 
                     steal = true;
-                    nbSStealsGPU[gpuID]++;
+                    nbSSteals++;
                     atomic_store(&(victim->lock), false); // reset lock
                     goto WS0;                             // Break out of WS0 loop
                   }
@@ -339,8 +368,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
 #pragma omp critical
     {
+      // printf("Thread[%d] best_l[%d] best[%d]\n", gpuID, best_l, *best);
+      nbStealsGPU[gpuID] = nbSteals;
+      nbSStealsGPU[gpuID] = nbSSteals;
+      expTreeGPU[gpuID] = tree;
+      expSolGPU[gpuID] = sol;
       *exploredTree += expTreeGPU[gpuID];
       *exploredSol += expSolGPU[gpuID];
+      //*best = MIN(*best, best_l);
       const int poolLocSize = pool_loc->size;
       for (int i = 0; i < poolLocSize; i++)
       {
@@ -350,28 +385,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           break;
       }
     }
-
-    // eachExploredTree[gpuID] = tree;
-    // eachExploredSol[gpuID] = sol;
-    // eachBest[gpuID] = best_l;
-
-    // expTreeGPU[gpuID] = tree;
-    // expSolGPU[gpuID] = sol;
-    // nStealsGPU[gpuID] = nSteal;
-    // nSStealsGPU[gpuID] = nSSteal;
-
     deleteSinglePool_atom(pool_loc);
   } // End of parallel region
 
+  *best = best_l;
   endTime = omp_get_wtime();
   double t2 = endTime - startTime;
   double maxDevice = get_max(timeDevice, D);
   t2 -= maxDevice;
-
-  //for (int i = 0; i < D; i++)
-  //{
-  //}
-  //*best = findMin(eachBest, D);
 
   printf("\nSearch on GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
