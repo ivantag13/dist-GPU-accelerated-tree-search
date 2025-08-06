@@ -26,10 +26,12 @@ extern "C"
         double *timeGpuIdle, double *timeTermination);
 
     void print_results_file_dist_multi_gpu(
-        const int inst, const int lb, const int D, const int w, const int commSize, const int optimum,
+        const int inst, const int lb, const int D, const int w, const int commSize, const int optimum, const int m, const int M,
         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
-        unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
-        double *timeKernelCall, double *timeIdle, double *workloadProc);
+        unsigned long long int *all_expTreeGPU, unsigned long long int *all_expSolGPU, unsigned long long int *all_genChildGPU,
+        unsigned long long int *all_nbStealsGPU, unsigned long long int *all_nbSStealsGPU, unsigned long long int *all_nbTerminationGPU,
+        unsigned long long int *nbSDistLoadBal, double *all_timeGpuCpy, double *all_timeGpuMalloc, double *all_timeGpuKer,
+        double *all_timeGenChild, double *all_timePoolOps, double *all_timeGpuIdle, double *all_timeTermination, double *timeLoadBal);
 
 #ifdef __cplusplus
 }

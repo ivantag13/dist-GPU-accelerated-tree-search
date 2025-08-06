@@ -26,6 +26,27 @@ Implementation of PFSP Statistic Storage and Analysis.
     }                                  \
     fprintf(file, "]\",")
 
+#define PRINT_ULL_ARRAY_DIST(arr)          \
+    fprintf(file, "\"[");                  \
+    for (int i = 0; i < D * commSize; ++i) \
+    {                                      \
+        fprintf(file, "%llu", arr[i]);     \
+        if (i != D * commSize - 1)                    \
+            fprintf(file, ",");            \
+    }                                      \
+    fprintf(file, "]\",")
+
+// Utility macro to format arrays (double)
+#define PRINT_DOUBLE_ARRAY_DIST(arr)       \
+    fprintf(file, "\"[");                  \
+    for (int i = 0; i < D * commSize; ++i) \
+    {                                      \
+        fprintf(file, "%.4f", arr[i]);     \
+        if (i != D * commSize - 1)                    \
+            fprintf(file, ",");            \
+    }                                      \
+    fprintf(file, "]\",")
+
 void print_results_file_single_gpu(const int inst, const int lb, const int optimum, const int m, const int M,
                                    const unsigned long long int exploredTree, const unsigned long long int exploredSol,
                                    const double timer, double timeGpuCpy, double timeGpuMalloc, double timeGpuKer, double timeGenChild)
@@ -48,13 +69,13 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
     // Write data
     fprintf(file,
             "%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%llu,%llu\n",
-            inst, lb, optimum,m,M,
+            inst, lb, optimum, m, M,
             timer, timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild,
             exploredTree, exploredSol);
 
     fclose(file);
 }
-  
+
 void print_results_file_multi_gpu(
     const int inst, const int lb, const int D, int ws, const int optimum, const int m, const int M,
     const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
@@ -74,7 +95,7 @@ void print_results_file_multi_gpu(
         if (size == 0)
         {
             fprintf(file,
-                    "instance_id,nb_device,lower_bound,work_sharing,optimum,m,M,total_time,total_tree,total_sol,"
+                    "instance_id,nb_device,lower_bound,work_stealing,optimum,m,M,total_time,total_tree,total_sol,"
                     "exp_tree_gpu,exp_sol_gpu,gen_child_gpu,steals_gpu,success_steals_gpu,termination_gpu,"
                     "gpu_memcpy_time,gpu_malloc_time,gpu_kernel_time,gpu_gen_child_time,pool_ops_time,gpu_idle_time,termination_time\n");
         }
@@ -108,10 +129,12 @@ void print_results_file_multi_gpu(
 }
 
 void print_results_file_dist_multi_gpu(
-    const int inst, const int lb, const int D, const int w, const int commSize, const int optimum,
+    const int inst, const int lb, const int D, const int w, const int commSize, const int optimum, const int m, const int M,
     const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
-    unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
-    double *timeKernelCall, double *timeIdle, double *workloadProc)
+    unsigned long long int *all_expTreeGPU, unsigned long long int *all_expSolGPU, unsigned long long int *all_genChildGPU,
+    unsigned long long int *all_nbStealsGPU, unsigned long long int *all_nbSStealsGPU, unsigned long long int *all_nbTerminationGPU,
+    unsigned long long int *nbSDistLoadBal, double *all_timeGpuCpy, double *all_timeGpuMalloc, double *all_timeGpuKer,
+    double *all_timeGenChild, double *all_timePoolOps, double *all_timeGpuIdle, double *all_timeTermination, double *timeLoadBal)
 {
     FILE *file = fopen("dist_multigpu.csv", "a");
 
@@ -123,26 +146,34 @@ void print_results_file_dist_multi_gpu(
         if (ftell(file) == 0)
         {
             fprintf(file,
-                    "instance_id,lower_bound,nb_devices,work_sharing,nb_procs,optimum,"
-                    "total_time,total_tree,total_sol,"
-                    "explored_tree_per_proc,explored_sol_per_proc,steals_per_proc,"
-                    "kernel_time_per_proc,idle_time_per_proc,workload_per_proc\n");
+                    "instance_id,nb_device,comm_size,lower_bound,load_balancing,optimum,m,M,total_time,total_tree,total_sol,"
+                    "all_exp_tree_gpu,all_exp_sol_gpu,all_gen_child_gpu,all_steals_gpu,all_success_steals_gpu,all_termination_gpu,"
+                    "all_gpu_memcpy_time,all_gpu_malloc_time,all_gpu_kernel_time,all_gpu_gen_child_time,all_pool_ops_time,all_gpu_idle_time,all_termination_time\n");
         }
         header_written = 1;
     }
 
     // Write scalars
-    fprintf(file, "%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
-            inst, lb, D, w, commSize, optimum,
-            timer, exploredTree, exploredSol);
+    fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
+            inst, D, commSize, lb, w, optimum, m, M, timer, exploredTree, exploredSol);
 
     // Write array fields
-    PRINT_ULL_ARRAY(expTreeProc);
-    PRINT_ULL_ARRAY(expSolProc);
-    PRINT_ULL_ARRAY(nStealsProc);
-    PRINT_DOUBLE_ARRAY(timeKernelCall);
-    PRINT_DOUBLE_ARRAY(timeIdle);
-    PRINT_DOUBLE_ARRAY(workloadProc);
+    PRINT_ULL_ARRAY_DIST(all_expTreeGPU);
+    PRINT_ULL_ARRAY_DIST(all_expSolGPU);
+    PRINT_ULL_ARRAY_DIST(all_genChildGPU);
+    PRINT_ULL_ARRAY_DIST(all_nbStealsGPU);
+    PRINT_ULL_ARRAY_DIST(all_nbSStealsGPU);
+    PRINT_ULL_ARRAY_DIST(all_nbTerminationGPU);
+    //PRINT_ULL_ARRAY_DIST(nbSDistLoadBal);
+
+    PRINT_DOUBLE_ARRAY_DIST(all_timeGpuCpy);
+    PRINT_DOUBLE_ARRAY_DIST(all_timeGpuMalloc);
+    PRINT_DOUBLE_ARRAY_DIST(all_timeGpuKer);
+    PRINT_DOUBLE_ARRAY_DIST(all_timeGenChild);
+    PRINT_DOUBLE_ARRAY_DIST(all_timePoolOps);
+    PRINT_DOUBLE_ARRAY_DIST(all_timeGpuIdle);
+    PRINT_DOUBLE_ARRAY_DIST(all_timeTermination);
+    //PRINT_DOUBLE_ARRAY_DIST(timeLoadBal);
 
     // Finalize row
     fprintf(file, "\n");
