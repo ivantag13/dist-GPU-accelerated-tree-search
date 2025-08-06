@@ -27,6 +27,28 @@
 #include "../common/util.h"
 // #include "../common/gpu_util.cuh"
 
+void checkBest(int *best_l, int *best, _Atomic bool *bestLock)
+{
+  if (*best_l > *best)
+    *best_l = *best;
+  else if (*best_l < *best)
+  {
+    bool expected = false;
+    while (1)
+    {
+      expected = false;
+      if (atomic_compare_exchange_strong(bestLock, &expected, true))
+      {
+        if (*best_l < *best)
+          *best = *best_l;
+        atomic_store(bestLock, false);
+        break;
+      }
+    }
+  }
+  return;
+}
+
 /******************************************************************************
 PFSP MPI Library
 ******************************************************************************/
@@ -85,10 +107,11 @@ int gatherRecvDataV(int commSize, int sendSize, Node *sendData, Node *recvData, 
 /***********************************************************************************
 Implementation of the parallel Distributed Multi-GPU C+MPI+OpenMP+CUDA PFSP search.
 ***********************************************************************************/
-void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const int w, double perc, int *best,
+void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const int w, int MPIRank, int commSize, double perc, int *best,
                  unsigned long long int *exploredTree, unsigned long long int *exploredSol, double *elapsedTime,
-                 unsigned long long int *expTreeProc, unsigned long long int *expSolProc, unsigned long long int *nStealsProc,
-                 double *timeKernelCall, double *timeIdle, double *workloadProc, int MPIRank, int commSize)
+                 unsigned long long int *all_expTreeGPU, unsigned long long int *all_expSolGPU, unsigned long long int *all_genChildGPU, unsigned long long int *all_nbStealsGPU,
+                 unsigned long long int *all_nbSStealsGPU, unsigned long long int *all_nbTerminationGPU, unsigned long long int *nbSDistLoadBal,
+                 double *all_timeGpuCpy, double *all_timeGpuMalloc, double *all_timeGpuKer, double *all_timeGenChild, double *all_timePoolOps, double *all_timeGpuIdle, double *all_timeTermination, double *timeLoadBal)
 {
   // New MPI data type corresponding to Node
   MPI_Datatype myNode;
@@ -152,12 +175,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   */
 
   // For every MPI process
-  unsigned long long int eachLocaleExploredTree = 0, eachLocaleExploredSol = 0;
-  int eachLocaleBest = *best;
+  // unsigned long long int eachLocaleExploredTree = 0, eachLocaleExploredSol = 0;
+  // int eachLocaleBest = *best;
 
   // For GPUs under each MPI process
-  unsigned long long int eachExploredTree[D], eachExploredSol[D];
-  int eachBest[D];
+  // unsigned long long int eachExploredTree[D], eachExploredSol[D];
+  // int eachBest[D];
 
   SinglePool_atom pool_lloc;
   initSinglePool_atom(&pool_lloc);
@@ -170,28 +193,40 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   SinglePool_atom multiPool[D];
   for (int i = 0; i < D; i++)
     initSinglePool_atom(&multiPool[i]);
+  unsigned long long int expTreeGPU[D], expSolGPU[D], genChildGPU[D], nbStealsGPU[D], nbSStealsGPU[D], nbTerminationGPU[D], nbSLocDistLoadBal = 0;
+  double timeGpuCpy[D], timeGpuMalloc[D], timeGpuKer[D], timeGenChild[D], timePoolOps[D], timeGpuIdle[D], timeTermination[D], timeLocLoadBal = 0, timeDevice[D];
+  int best_l = *best;
+  unsigned long long int tree = 0, sol = 0;
 
-  // Boolean variables for termination detection
+  for (int i = 0; i < D; i++)
+  {
+    expTreeGPU[i] = 0;
+    expSolGPU[i] = 0;
+    genChildGPU[i] = 0;
+    nbStealsGPU[i] = 0;
+    nbSStealsGPU[i] = 0;
+    nbTerminationGPU[i] = 0;
+    timeGpuCpy[i] = 0;
+    timeGpuMalloc[i] = 0;
+    timeGpuKer[i] = 0;
+    timeGenChild[i] = 0;
+    timePoolOps[i] = 0;
+    timeGpuIdle[i] = 0;
+    timeTermination[i] = 0;
+    timeDevice[i] = 0;
+  }
+
+  // Atomic boolean variables
+  _Atomic bool bestLock = false;
   _Atomic bool allTasksIdleFlag = false;
   _Atomic bool eachTaskState[D]; // one task per GPU
   for (int i = 0; i < D; i++)
     atomic_store(&eachTaskState[i], BUSY);
 
-  // TODO: Implement OpenMP reduction to variables best_l, eachExploredTree, eachExploredSol
-  // int best_l = *best;
   int global_termination_flag = 0, local_need = 0, request = 0;
   int poolSizes_all[D];
 
-  double timeDevice[D];
-  double timeLocalKernelCall[D];
-  double timeIdleDevice[D];
-  for (int i = 0; i < D; i++)
-  {
-    timeLocalKernelCall[i] = 0;
-    timeIdleDevice[i] = 0;
-  }
   startTime = omp_get_wtime();
-
   int nbThreads = (w != 0) ? (D + 1) : D;
 
   // Allocating vectors for distributed communications
@@ -200,31 +235,33 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   Node *recvNodes = (Node *)malloc(commSize * distRatio * M * sizeof(Node));
   Node *insNodes = (Node *)malloc(commSize * distRatio * M * sizeof(Node));
 
-#pragma omp parallel num_threads(nbThreads) shared(eachExploredTree, eachExploredSol, eachBest, eachTaskState, allTasksIdleFlag,            \
-                                                       pool_lloc, multiPool, jobs, machines, lbound1, lbound2, lb, m, M, D, perc,           \
-                                                       best, exploredTree, exploredSol, global_termination_flag, poolSizes_all, timeDevice, \
-                                                       sendNodes, recvNodes, insNodes) // reduction(min:best_l)
+#pragma omp parallel num_threads(nbThreads) shared(bestLock, eachTaskState, allTasksIdleFlag, pool_lloc, multiPool,                                                             \
+                                                       jobs, machines, lbound1, lbound2, lb, m, M, D, perc, w, best, exploredTree, exploredSol,                                 \
+                                                       MPIRank, commSize, global_termination_flag, poolSizes_all, sendNodes, recvNodes, insNodes,                               \
+                                                       elapsedTime, expTreeGPU, expSolGPU, genChildGPU, nbStealsGPU, nbSStealsGPU, nbTerminationGPU, nbSDistLoadBal,            \
+                                                       timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild, timePoolOps, timeGpuIdle, timeTermination, timeLoadBal, timeDevice) \
+    reduction(min : best_l) reduction(+ : tree, sol)
   {
-    double startSetDevice, endSetDevice, startKernelCall, endKernelCall, startTimeIdle, endTimeIdle;
-    int nSteal = 0, nSSteal = 0;
-    int gpuID = omp_get_thread_num();
+    // double startSetDevice, endSetDevice, startKernelCall, endKernelCall, startTimeIdle, endTimeIdle;
+    double startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild,
+        startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination, startLoadBal, endLoadBal;
+    int gpuID = omp_get_thread_num(), nbSteals = 0, nbSSteals = 0, nbDLoadlBal = 0;
 
     // Debug: printf("Debug: Proc[%d] Thread[%d] Mark[%d]\n", MPIRank, gpuID, mark);
 
     if (gpuID != D) // gpuID == D does not manage a GPU!!!
     {
-      startSetDevice = omp_get_wtime();
+      int startSetDevice = omp_get_wtime();
       cudaSetDevice(gpuID);
-      endSetDevice = omp_get_wtime();
-      double timeSetDevice = endSetDevice - startSetDevice;
-      timeDevice[gpuID] = timeSetDevice;
+      int endSetDevice = omp_get_wtime();
+      timeDevice[gpuID] = endSetDevice - startSetDevice;
     }
 
-    unsigned long long int tree = 0, sol = 0;
+    // unsigned long long int tree = 0, sol = 0;
+    // int best_l = *best;
     SinglePool_atom *pool_loc;
     if (gpuID != D)
       pool_loc = &multiPool[gpuID];
-    int best_l = *best;
     bool taskState = BUSY;
 
     // Each shared memory pool gets its chunk
@@ -234,6 +271,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     pool_lloc.front = 0;
     pool_lloc.size = 0;
 
+    startGpuMalloc = omp_get_wtime();
     // GPU bounding functions data
     lb1_bound_data lbound1_d;
     int *p_times_d, *min_heads_d, *min_tails_d;
@@ -263,6 +301,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int *bounds = (int *)malloc((jobs * M) * sizeof(int));
     int *bounds_d;
     cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
+    endGpuMalloc = omp_get_wtime();
+    timeGpuMalloc[gpuID] = endGpuMalloc - startGpuMalloc;
 
 #pragma omp barrier
 
@@ -277,6 +317,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       // Work Sharing by Last Thread
       if (gpuID == D && w == 1)
       {
+        startLoadBal = omp_get_wtime();
         global_termination_flag = globalTermination(commSize, D, multiPool, poolSizes_all, m);
 
         // No global termination, then work sharing
@@ -291,7 +332,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             sendNodesSize = popBackBulk(&multiPool[victims[j]], m, distRatio * M, sendNodes, 2);
             if (sendNodesSize > 0)
             {
-              nStealsProc[MPIRank]++;
+              nbSLocDistLoadBal++;
               break;
             }
           }
@@ -310,11 +351,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
           pushBackBulk(&multiPool[0], insNodes, insNodesSize);
         }
+        endLoadBal = omp_get_wtime();
+        timeLocLoadBal += endLoadBal - startLoadBal;
       }
 
       // Work Stealing by Last Thread
       if (gpuID == D && w == 2)
       {
+        startLoadBal = omp_get_wtime();
         global_termination_flag = globalTermination(commSize, D, multiPool, poolSizes_all, m);
 
         // If no Termination, we proceed to work sharing/work stealing
@@ -355,7 +399,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           // Step 4: Redistribute nodes (only for processes that needed work)
           if (needs_work && recvNodesSize > 0)
           {
-            nStealsProc[MPIRank]++;
+            nbSLocDistLoadBal++;
             int nodesPerProcess = recvNodesSize / needy_count; // Number of nodes each needy process will recover from every other process
             int remainder = recvNodesSize % needy_count;       // Remainder to handle uneven distribution to all needy MPI processes
             int insNodesSize;
@@ -395,14 +439,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             local_need = 0;
           }
         }
+        endLoadBal = omp_get_wtime();
+        timeLocLoadBal += endLoadBal - startLoadBal;
       }
 
       if (gpuID != D)
       {
         // Each task gets its parents nodes from the pool
         // counter++;
+        startPoolOps = omp_get_wtime();
         int poolSize = popBackBulk(pool_loc, m, M, parents, 1);
         poolSizes_all[gpuID] = poolSize;
+        endPoolOps = omp_get_wtime();
+        timePoolOps[gpuID] += endPoolOps - startPoolOps;
 
         if (poolSize > 0)
         {
@@ -412,6 +461,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             atomic_store(&eachTaskState[gpuID], BUSY);
           }
 
+          startGpuCpy = omp_get_wtime();
           int sum = 0;
           int diff;
           int i, j;
@@ -429,22 +479,41 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
           cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
           cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
+          endGpuCpy = omp_get_wtime();
+          timeGpuCpy[gpuID] += endGpuCpy - startGpuCpy;
+
           // numBounds is the 'size' of the problem
-          startKernelCall = omp_get_wtime();
+          startGpuKer = omp_get_wtime();
           evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
           cudaDeviceSynchronize();
-          endKernelCall = omp_get_wtime();
-          timeLocalKernelCall[gpuID] += endKernelCall - startKernelCall;
+          endGpuKer = omp_get_wtime();
+          timeGpuKer[gpuID] += endGpuKer - startGpuKer;
+
+          startGpuCpy = omp_get_wtime();
           cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
+          endGpuCpy = omp_get_wtime();
+          timeGpuCpy[gpuID] += endGpuCpy - startGpuCpy;
 
           // Each task generates and inserts its children nodes to the pool.
+          startGenChild = omp_get_wtime();
+          if (best_l != *best)
+            checkBest(&best_l, best, &bestLock);
           int indexChildren;
           generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+          if (best_l != *best)
+            checkBest(&best_l, best, &bestLock);
+          endGenChild = omp_get_wtime();
+          timeGenChild[gpuID] += endGenChild - startGenChild;
+
+          startPoolOps = omp_get_wtime();
           pushBackBulk(pool_loc, children, indexChildren);
+          genChildGPU[gpuID] += indexChildren;
+          endPoolOps = omp_get_wtime();
+          timePoolOps[gpuID] += endPoolOps - startPoolOps;
         }
         else // local work stealing
         {
-          startTimeIdle = omp_get_wtime();
+          startGpuIdle = omp_get_wtime();
           int tries = 0;
           bool steal = false;
           int victims[D];
@@ -459,7 +528,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             { // if not me
               SinglePool_atom *victim;
               victim = &multiPool[victimID];
-              nSteal++;
+              nbSteals++;
               int nn = 0;
               // int count = 0;
               while (nn < 10)
@@ -480,10 +549,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                       exit(-1);
                     }
 
+                    startPoolOps = omp_get_wtime();
                     pushBackBulk(pool_loc, stolenNodes, stolenNodesSize);
+                    endPoolOps = omp_get_wtime();
+                    timePoolOps[gpuID] += endPoolOps - startPoolOps;
 
                     steal = true;
-                    nSSteal++;
+                    nbSSteals++;
                     atomic_store(&(victim->lock), false); // reset lock
                     goto WS0;                             // Break out of WS0 loop
                   }
@@ -498,11 +570,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             tries++;
           }
         WS0:
-          endTimeIdle = omp_get_wtime();
-          timeIdleDevice[gpuID] += endTimeIdle - startTimeIdle;
+          endGpuIdle = omp_get_wtime();
+          timeGpuIdle[gpuID] += endGpuIdle - startGpuIdle;
           if (steal == false)
           {
             // termination
+            startTermination = omp_get_wtime();
+            nbTerminationGPU[gpuID]++;
             if (taskState == BUSY)
             {
               taskState = IDLE;
@@ -533,10 +607,20 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 continue;
               }
               else if (w == 1)
+              {
+                endTermination = omp_get_wtime();
+                timeTermination[gpuID] += endTermination - startTermination;
                 continue;
+              }
               else
+              {
+                endTermination = omp_get_wtime();
+                timeTermination[gpuID] += endTermination - startTermination;
                 break;
+              }
             }
+            endTermination = omp_get_wtime();
+            timeTermination[gpuID] += endTermination - startTermination;
             continue;
           }
           else
@@ -573,6 +657,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     {
       if (gpuID != D)
       {
+        nbStealsGPU[gpuID] = nbSteals;
+        nbSStealsGPU[gpuID] = nbSSteals;
+        expTreeGPU[gpuID] = tree;
+        expSolGPU[gpuID] = sol;
+        // *exploredTree += expTreeGPU[gpuID];
+        // *exploredSol += expSolGPU[gpuID];
         const int poolLocSize = pool_loc->size;
         for (int i = 0; i < poolLocSize; i++)
         {
@@ -581,17 +671,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           if (!hasWork)
             break;
         }
+        deleteSinglePool_atom(pool_loc);
       }
     }
-    if (gpuID != D)
-    {
-      eachExploredTree[gpuID] = tree;
-      eachExploredSol[gpuID] = sol;
-      eachBest[gpuID] = best_l;
-
-      deleteSinglePool_atom(pool_loc);
-    }
-
+    // if (gpuID != D)
+    // {
+    //   eachExploredTree[gpuID] = tree;
+    //   eachExploredSol[gpuID] = sol;
+    //   eachBest[gpuID] = best_l;
+    // }
   } // End of parallel region OpenMP
 
   free(sendNodes);
@@ -602,104 +690,133 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   /*******************************
   Gathering statistics
   *******************************/
-
+  //*exploredTree += tree; // At this point, value per process
+  //*exploredSol += sol;   // At this point, value per process
+  *best = best_l; // At this point, minimum within its MPI process
   endTime = omp_get_wtime();
   double t2, t2Temp = endTime - startTime;
   double maxDevice = get_max(timeDevice, D);
-  double maxKernelCall = get_max(timeLocalKernelCall, D);
-  double maxIdleTime = get_max(timeIdleDevice, D);
-  unsigned long long int mySteals = nStealsProc[MPIRank];
+  // double maxKernelCall = get_max(timeLocalKernelCall, D);
+  // double maxIdleTime = get_max(timeIdleDevice, D);
+  // unsigned long long int mySteals = nStealsProc[MPIRank];
   t2Temp -= maxDevice;
   MPI_Reduce(&t2Temp, &t2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
-  // GPU
-  for (int i = 0; i < D; i++)
-  {
-    eachLocaleExploredTree += eachExploredTree[i];
-    eachLocaleExploredSol += eachExploredSol[i];
-  }
-  eachLocaleBest = findMin(eachBest, D);
+  // // GPU
+  // for (int i = 0; i < D; i++)
+  // {
+  //   eachLocaleExploredTree += eachExploredTree[i];
+  //   eachLocaleExploredSol += eachExploredSol[i];
+  // }
+  // eachLocaleBest = findMin(eachBest, D);
 
   // MPI
-  unsigned long long int midExploredTree = 0, midExploredSol = 0;
-  MPI_Reduce(&eachLocaleExploredTree, &midExploredTree, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&eachLocaleExploredSol, &midExploredSol, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-
-  // TODO : fix this (it should be an All_reduce I suppose)
-  MPI_Reduce(&eachLocaleBest, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
-
-  // Gather data from all processes for printing GPU workload statistics
-  unsigned long long int *allExploredTrees = NULL;
-  unsigned long long int *allExploredSols = NULL;
-  unsigned long long int *allEachExploredTrees = NULL; // For eachExploredTree array
-  unsigned long long int *allStealsProc = NULL;        // For eachExploredTree array
-  double *allMaxKernelCall = NULL;
-  double *allMaxIdleDevice = NULL;
+  // unsigned long long int midExploredTree = 0, midExploredSol = 0;
   if (MPIRank == 0)
   {
-    *exploredTree += midExploredTree;
-    *exploredSol += midExploredSol;
-    allExploredTrees = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
-    allExploredSols = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
-    allEachExploredTrees = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
-    allStealsProc = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
-    allMaxKernelCall = (double *)malloc(commSize * sizeof(double));
-    allMaxIdleDevice = (double *)malloc(commSize * sizeof(double));
+    tree += *exploredTree;
+    sol += *exploredSol;
   }
+  MPI_Reduce(&tree, exploredTree, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD); // At this point, value per process
+  MPI_Reduce(&sol, exploredSol, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);   // At this point, value per process
+  MPI_Reduce(&best_l, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+  best_l = *best; // Local Process best is updated for final DFS
 
-  MPI_Gather(&eachLocaleExploredTree, 1, MPI_UNSIGNED_LONG_LONG, allExploredTrees, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
-  MPI_Gather(&eachLocaleExploredSol, 1, MPI_UNSIGNED_LONG_LONG, allExploredSols, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
-  // Gather eachExploredTree array from all processes
-  MPI_Gather(eachExploredTree, D, MPI_UNSIGNED_LONG_LONG, allEachExploredTrees, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  // Gather data from all processes for printing GPU workload statistics
+  // unsigned long long int *allExploredTrees = NULL;
+  // unsigned long long int *allExploredSols = NULL;
+  // unsigned long long int *allEachExploredTrees = NULL; // For eachExploredTree array
+  // unsigned long long int *allStealsProc = NULL;        // For eachExploredTree array
+  // double *allMaxKernelCall = NULL;
+  // double *allMaxIdleDevice = NULL;
+  // if (MPIRank == 0)
+  //{
+  //  *exploredTree += midExploredTree;
+  //  *exploredSol += midExploredSol;
+  //  allExploredTrees = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
+  //  allExploredSols = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
+  //  allEachExploredTrees = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+  //  allStealsProc = (unsigned long long int *)malloc(commSize * sizeof(unsigned long long int));
+  //  allMaxKernelCall = (double *)malloc(commSize * sizeof(double));
+  //  allMaxIdleDevice = (double *)malloc(commSize * sizeof(double));
+  //}
 
-  MPI_Gather(&maxKernelCall, 1, MPI_DOUBLE, allMaxKernelCall, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-  MPI_Gather(&maxIdleTime, 1, MPI_DOUBLE, allMaxIdleDevice, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-  MPI_Gather(&mySteals, 1, MPI_UNSIGNED_LONG_LONG, allStealsProc, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  // MPI_Gather(&eachLocaleExploredTree, 1, MPI_UNSIGNED_LONG_LONG, allExploredTrees, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  // MPI_Gather(&eachLocaleExploredSol, 1, MPI_UNSIGNED_LONG_LONG, allExploredSols, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  //  Gather eachExploredTree array from all processes
+  // MPI_Gather(eachExploredTree, D, MPI_UNSIGNED_LONG_LONG, allEachExploredTrees, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+
+  // MPI_Gather(&maxKernelCall, 1, MPI_DOUBLE, allMaxKernelCall, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  // MPI_Gather(&maxIdleTime, 1, MPI_DOUBLE, allMaxIdleDevice, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  // MPI_Gather(&mySteals, 1, MPI_UNSIGNED_LONG_LONG, allStealsProc, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(expTreeGPU, D, MPI_UNSIGNED_LONG_LONG, all_expTreeGPU, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(expSolGPU, D, MPI_UNSIGNED_LONG_LONG, all_expSolGPU, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(genChildGPU, D, MPI_UNSIGNED_LONG_LONG, all_genChildGPU, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(nbStealsGPU, D, MPI_UNSIGNED_LONG_LONG, all_nbStealsGPU, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(nbSStealsGPU, D, MPI_UNSIGNED_LONG_LONG, all_nbSStealsGPU, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(nbTerminationGPU, D, MPI_UNSIGNED_LONG_LONG, all_nbTerminationGPU, D, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+  MPI_Gather(&nbSLocDistLoadBal, 1, MPI_UNSIGNED_LONG_LONG, nbSDistLoadBal, 1, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
+
+  MPI_Gather(timeGpuCpy, D, MPI_DOUBLE, all_timeGpuCpy, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(timeGpuMalloc, D, MPI_DOUBLE, all_timeGpuMalloc, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(timeGpuKer, D, MPI_DOUBLE, all_timeGpuKer, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(timeGenChild, D, MPI_DOUBLE, all_timeGenChild, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(timePoolOps, D, MPI_DOUBLE, all_timePoolOps, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(timeGpuIdle, D, MPI_DOUBLE, all_timeGpuIdle, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(timeTermination, D, MPI_DOUBLE, all_timeTermination, D, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(&timeLocLoadBal, 1, MPI_DOUBLE, timeLoadBal, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   // Update GPU
   if (MPIRank == 0)
   {
+    unsigned long long int expTreeProc[commSize], expSolProc[commSize];
     for (int i = 0; i < commSize; i++)
     {
-      expSolProc[i] = allExploredSols[i];
-      expTreeProc[i] = allExploredTrees[i];
-      workloadProc[i] = (double)100 * allExploredTrees[i] / ((double)*exploredTree);
-      timeKernelCall[i] = allMaxKernelCall[i];
-      timeIdle[i] = allMaxIdleDevice[i];
-      nStealsProc[i] = allStealsProc[i];
+      expTreeProc[i] = 0;
+      expSolProc[i] = 0;
+      for (int j = 0; j < D; j++)
+      {
+        expTreeProc[i] += all_expTreeGPU[i * commSize + j];
+        expSolProc[i] += all_expSolGPU[i * commSize + j];
+        // workloadProc[i] = (double)100 * allExploredTrees[i] / ((double)*exploredTree);
+        // timeKernelCall[i] = allMaxKernelCall[i];
+        // timeIdle[i] = allMaxIdleDevice[i];
+        // nStealsProc[i] = allStealsProc[i];
+      }
     }
 
     printf("\nSearch on GPU completed\n");
     printf("Size of the explored tree: %llu\n", *exploredTree);
     printf("  Per MPI process: ");
     for (int i = 0; i < commSize; i++)
-      printf("[%d] = %llu ", i, allExploredTrees[i]);
+      printf("[%d] = %llu ", i, expTreeProc[i]);
     printf("\n");
     printf("Number of explored solutions: %llu\n", *exploredSol);
     printf("  Per MPI process: ");
     for (int i = 0; i < commSize; i++)
-      printf("[%d] = %llu ", i, allExploredSols[i]);
+      printf("[%d] = %llu ", i, expSolProc[i]);
     printf("\n");
-    printf("Max Time Kernel Call per MPI process: ");
-    for (int i = 0; i < commSize; i++)
-      printf("[%d] = %f ", i, timeKernelCall[i]);
-    printf("\n");
+    // printf("Max Time Kernel Call per MPI process: ");
+    // for (int i = 0; i < commSize; i++)
+    //   printf("[%d] = %f ", i, timeKernelCall[i]);
+    // printf("\n");
     printf("Best solution found: %d\n", *best);
     printf("Elapsed time: %f [s]\n\n", t2);
-    printf("Workload per GPU per MPI process: \n");
-    for (int i = 0; i < commSize; i++)
-    {
-      printf("  Process [%d]: ", i);
-      for (int gpuID = 0; gpuID < D; gpuID++)
-        printf("%.2f ", (double)100 * allEachExploredTrees[i * D + gpuID] / ((double)*exploredTree));
-      printf("\n");
-    }
+    // printf("Workload per GPU per MPI process: \n");
+    // for (int i = 0; i < commSize; i++)
+    //{
+    //   printf("  Process [%d]: ", i);
+    //   for (int gpuID = 0; gpuID < D; gpuID++)
+    //     printf("%.2f ", (double)100 * allEachExploredTrees[i * D + gpuID] / ((double)*exploredTree));
+    //   printf("\n");
+    // }
   }
 
   /*
     Step 3: Remaining nodes evaluated in DFS on CPU by each MPI process.
   */
-  unsigned long long int finalLocaleExpTree = 0, finalLocaleExpSol = 0;
+  unsigned long long int final_expTree = 0, final_expSol = 0, all_final_expTree = 0, all_final_expSol = 0;
+
   startTime = omp_get_wtime();
   while (1)
   {
@@ -707,19 +824,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     Node parent = popBackFree(&pool_lloc, &hasWork);
     if (!hasWork)
       break;
-    decompose(jobs, lb, best, lbound1, lbound2, parent, &finalLocaleExpTree, &finalLocaleExpSol, &pool_lloc);
+    decompose(jobs, lb, &best_l, lbound1, lbound2, parent, &final_expTree, &final_expSol, &pool_lloc);
   }
   endTime = omp_get_wtime();
   double t3, t3Temp = endTime - startTime;
-
   MPI_Reduce(&t3Temp, &t3, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-
-  unsigned long long int masterFinalLocaleExpTree = 0, masterFinalLocaleExpSol = 0;
-  MPI_Reduce(&finalLocaleExpTree, &masterFinalLocaleExpTree, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&finalLocaleExpSol, &masterFinalLocaleExpSol, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-
-  // TODO : Fix this one also
-  // MPI_Reduce(&eachLocaleBest, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&final_expTree, &all_final_expTree, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&final_expSol, &all_final_expSol, 1, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&best_l, best, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
   *elapsedTime = t1 + t2 + t3;
 
   // freeing memory for structs common to all MPI processes
@@ -730,8 +842,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   if (MPIRank == 0)
   {
-    *exploredTree += masterFinalLocaleExpTree;
-    *exploredSol += masterFinalLocaleExpSol;
+    *exploredTree += all_final_expTree;
+    *exploredSol += all_final_expSol;
 
     printf("\nSearch on CPU completed\n");
     printf("Size of the explored tree: %llu\n", *exploredTree);
@@ -773,27 +885,73 @@ int main(int argc, char *argv[])
     print_settings(inst, machines, jobs, ub, lb, D, ws, commSize, LB, version);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
+  unsigned long long int exploredTree = 0, exploredSol = 0;
+  unsigned long long int *all_expTreeGPU, *all_expSolGPU, *all_genChildGPU, *all_nbStealsGPU, *all_nbSStealsGPU, *all_nbTerminationGPU, nbSDistLoadBal[commSize];
 
-  unsigned long long int exploredTree = 0, exploredSol = 0, expTreeProc[commSize], expSolProc[commSize], nStealsProc[commSize];
-  double elapsedTime, timeKernelCall[commSize], timeIdle[commSize], workloadProc[commSize];
+  double elapsedTime = 0;
+  double *all_timeGpuCpy, *all_timeGpuMalloc, *all_timeGpuKer, *all_timeGenChild, *all_timePoolOps, *all_timeGpuIdle, *all_timeTermination, timeLoadBal[commSize];
 
   for (int i = 0; i < commSize; i++)
   {
-    expTreeProc[i] = 0;
-    expSolProc[i] = 0;
-    timeKernelCall[i] = 0;
-    timeIdle[i] = 0;
-    workloadProc[i] = 0;
-    nStealsProc[i] = 0;
+    nbSDistLoadBal[i] = 0;
+    timeLoadBal[i] = 0;
+  }
+  if (MPIRank == 0)
+  {
+    all_expTreeGPU = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+    all_expSolGPU = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+    all_genChildGPU = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+    all_nbStealsGPU = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+    all_nbSStealsGPU = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+    all_nbTerminationGPU = (unsigned long long int *)malloc(commSize * D * sizeof(unsigned long long int));
+    all_timeGpuCpy = (double *)malloc(commSize * D * sizeof(double));
+    all_timeGpuMalloc = (double *)malloc(commSize * D * sizeof(double));
+    all_timeGpuKer = (double *)malloc(commSize * D * sizeof(double));
+    all_timeGenChild = (double *)malloc(commSize * D * sizeof(double));
+    all_timePoolOps = (double *)malloc(commSize * D * sizeof(double));
+    all_timeGpuIdle = (double *)malloc(commSize * D * sizeof(double));
+    all_timeTermination = (double *)malloc(commSize * D * sizeof(double));
   }
 
-  pfsp_search(inst, lb, m, M, D, LB, perc, &optimum, &exploredTree, &exploredSol, &elapsedTime, expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc, MPIRank, commSize);
+  pfsp_search(inst, lb, m, M, D, LB, MPIRank, commSize, perc, &optimum, &exploredTree, &exploredSol, &elapsedTime,
+              all_expTreeGPU, all_expSolGPU, all_genChildGPU, all_nbStealsGPU, all_nbSStealsGPU, all_nbTerminationGPU, nbSDistLoadBal,
+              all_timeGpuCpy, all_timeGpuMalloc, all_timeGpuKer, all_timeGenChild, all_timePoolOps, all_timeGpuIdle, all_timeTermination, timeLoadBal);
 
   if (MPIRank == 0)
   {
     print_results(optimum, exploredTree, exploredSol, elapsedTime);
-    print_results_file_dist_multi_gpu(inst, lb, D, LB, commSize, optimum, exploredTree, exploredSol, elapsedTime,
-                                      expTreeProc, expSolProc, nStealsProc, timeKernelCall, timeIdle, workloadProc);
+    print_results_file_dist_multi_gpu(inst, lb, D, LB, commSize, optimum, m, M, exploredTree, exploredSol, elapsedTime,
+                                      all_expTreeGPU, all_expSolGPU, all_genChildGPU, all_nbStealsGPU, all_nbSStealsGPU, all_nbTerminationGPU, nbSDistLoadBal,
+                                      all_timeGpuCpy, all_timeGpuMalloc, all_timeGpuKer, all_timeGenChild, all_timePoolOps, all_timeGpuIdle, all_timeTermination, timeLoadBal);
+  }
+  if (MPIRank == 0)
+  {
+    free(all_expTreeGPU);
+    all_expTreeGPU = NULL;
+    free(all_expSolGPU);
+    all_expSolGPU = NULL;
+    free(all_genChildGPU);
+    all_genChildGPU = NULL;
+    free(all_nbStealsGPU);
+    all_nbStealsGPU = NULL;
+    free(all_nbSStealsGPU);
+    all_nbSStealsGPU = NULL;
+    free(all_nbTerminationGPU);
+    all_nbTerminationGPU = NULL;
+    free(all_timeGpuCpy);
+    all_timeGpuCpy = NULL;
+    free(all_timeGpuMalloc);
+    all_timeGpuMalloc = NULL;
+    free(all_timeGpuKer);
+    all_timeGpuKer = NULL;
+    free(all_timeGenChild);
+    all_timeGenChild = NULL;
+    free(all_timePoolOps);
+    all_timePoolOps = NULL;
+    free(all_timeGpuIdle);
+    all_timeGpuIdle = NULL;
+    free(all_timeTermination);
+    all_timeTermination = NULL;
   }
   MPI_Finalize();
   return 0;
