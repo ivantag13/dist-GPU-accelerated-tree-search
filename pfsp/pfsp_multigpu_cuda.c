@@ -133,7 +133,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   {
     double startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild,
         startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination;
-    int gpuID = omp_get_thread_num(); // nbSteal = 0, nbSSteal = 0,
+    int gpuID = omp_get_thread_num();
 
     int startSetDevice = omp_get_wtime();
     cudaSetDevice(gpuID);
@@ -237,7 +237,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         timeGpuCpy[gpuID] += endGpuCpy - startGpuCpy;
 
         // Each task generates and inserts its children nodes to the pool.
-
         startGenChild = omp_get_wtime();
         if (best_l != *best)
           checkBest(&best_l, best, &bestLock);
@@ -245,7 +244,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
         if (best_l != *best)
           checkBest(&best_l, best, &bestLock);
-
         endGenChild = omp_get_wtime();
         timeGenChild[gpuID] += endGenChild - startGenChild;
 
@@ -444,8 +442,7 @@ int main(int argc, char *argv[])
   print_settings(inst, machines, jobs, ub, lb, D, ws, commSize, LB, version);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
-  unsigned long long int exploredTree = 0;
-  unsigned long long int exploredSol = 0;
+  unsigned long long int exploredTree = 0, exploredSol = 0;
   unsigned long long int expTreeGPU[D], expSolGPU[D], genChildGPU[D], nbStealsGPU[D], nbSStealsGPU[D], nbTerminationGPU[D];
 
   double elapsedTime = 0;
