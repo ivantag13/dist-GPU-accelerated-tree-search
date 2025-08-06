@@ -8,6 +8,7 @@ MPI_COMPILER  := mpicc
 CUDA_COMPILER := nvcc
 HIP_COMPILER  := hipcc
 AMD_GPU_ARCH  := gfx1102
+MPI_LIB       := -I/usr/lib/x86_64-linux-gnu/openmpi/include -I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi
 
 # Platform-specific flags and libraries
 ifeq ($(SYSTEM), g5k)
