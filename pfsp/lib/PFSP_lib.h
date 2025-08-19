@@ -6,6 +6,7 @@ extern "C"
 {
 #endif
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -77,7 +78,7 @@ extern "C"
           if (lowerbound < *best)
           {
             Node child;
-            memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
+            memcpy(child.prmu, parent.prmu, jobs * sizeof(int16_t));
             swap(&child.prmu[depth], &child.prmu[j]);
             child.depth = depth + 1;
             child.limit1 = parent.limit1 + 1;

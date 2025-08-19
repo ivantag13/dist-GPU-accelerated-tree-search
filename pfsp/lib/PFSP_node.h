@@ -14,9 +14,9 @@ extern "C"
 
     typedef struct
     {
-        uint8_t depth;
-        int limit1;
-        int prmu[MAX_JOBS];
+        int16_t depth;
+        int16_t limit1;
+        int16_t prmu[MAX_JOBS];
     } Node;
 
     void initRoot(Node *root, const int jobs);

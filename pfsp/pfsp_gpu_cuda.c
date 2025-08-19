@@ -12,6 +12,7 @@
 #include <getopt.h>
 #include <time.h>
 #include <math.h>
+#include <omp.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -128,6 +129,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
   clock_gettime(CLOCK_MONOTONIC_RAW, &endGpuMalloc);
   *timeGpuMalloc = (endGpuMalloc.tv_sec - startGpuMalloc.tv_sec) + (endGpuMalloc.tv_nsec - startGpuMalloc.tv_nsec) / 1e9;
 
+  int counter = 1;
   while (1)
   {
     // Node parents[M];
@@ -172,13 +174,31 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       *timeGpuCpy += (endGpuCpy.tv_sec - startGpuCpy.tv_sec) + (endGpuCpy.tv_nsec - startGpuCpy.tv_nsec) / 1e9;
 
       // each task generates and inserts its children nodes to the pool.
+      // TODO: add OpenMP loop to parallelize multiple uses of generate_children
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChild);
-      int indexChildren;
-      // Node children[numBounds];
-      generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
-      pushBackBulkFree(&pool, children, indexChildren);
+      int nb_threads = 1;
+#pragma omp parallel num_threads(nb_threads) shared(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, pool)
+      {
+        // TODO: play with index now
+        int indexChildren;
+        // Node children[numBounds];
+        generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
+#pragma omp critical
+        {
+          pushBackBulkFree(&pool, children, indexChildren);
+        }
+      }
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChild);
       *timeGenChild += (endGenChild.tv_sec - startGenChild.tv_sec) + (endGenChild.tv_nsec - startGenChild.tv_nsec) / 1e9;
+
+      if (counter % 5000 == 0)
+      {
+        clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+        double t2 = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        printf("Counter[%d]: Tree[%llu] Sol[%llu]\n Pool: size[%d] capacity[%d] poolSize[%d]\n Timer: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n",
+               counter, *exploredTree, *exploredSol, pool.size, pool.capacity, poolSize, t2, *timeGpuCpy, *timeGpuMalloc, *timeGpuKer, *timeGenChild);
+      }
+      counter++;
     }
     else
       break;
