@@ -95,7 +95,7 @@ $(LIBCOMMON)/gpu_util_hip.o: $(LIBCOMMON)/gpu_util.cu
 # Build executable for single-GPU in C+HIP
 pfsp_gpu_hip.o: pfsp_gpu_cuda.c
 	hipify-perl $< > $<.hip
-	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -c $<.hip -o $@
+	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -fopenmp -c $<.hip -o $@
 
 pfsp_gpu_hip.out: pfsp_gpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBCOMMON)/gpu_util_hip.o $(LIBPATH)/PFSP_gpu_lib_hip.o $(LIBPATH)/PFSP_statistic.o
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -fopenmp $^ -o $@
