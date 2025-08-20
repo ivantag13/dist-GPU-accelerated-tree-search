@@ -9,12 +9,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <limits.h>
+#include <sched.h>
 #include <getopt.h>
 #include <time.h>
 #include <math.h>
 #include <omp.h>
 #include <cuda_runtime.h>
-#include <stdatomic.h>
 
 #include "lib/c_bound_simple.h"
 #include "lib/c_bound_johnson.h"
@@ -134,6 +134,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     double startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild,
         startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination;
     int gpuID = omp_get_thread_num();
+    int num_procs = omp_get_num_procs();
+    int cpu = sched_getcpu();
+    printf("Thread %d sees %d processors, & cpu is %d\n", gpuID, num_procs, cpu);
 
     int startSetDevice = omp_get_wtime();
     cudaSetDevice(gpuID);
@@ -241,7 +244,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         if (best_l != *best)
           checkBest(&best_l, best, &bestLock);
         int indexChildren;
-        generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+        generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, &indexChildren);
         if (best_l != *best)
           checkBest(&best_l, best, &bestLock);
         endGenChild = omp_get_wtime();
