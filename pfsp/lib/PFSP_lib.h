@@ -49,7 +49,7 @@ extern "C"
 
   // Generate children nodes (evaluated on GPU) on CPU
   static inline void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
-                                       unsigned long long int *exploredSol, int *best, SinglePool_atom *pool, int *index)
+                                       unsigned long long int *exploredSol, int *best, int *index)
   {
     int sum = 0;
     int childrenIndex = 0;
