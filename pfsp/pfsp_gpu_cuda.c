@@ -9,11 +9,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <limits.h>
+#include <sched.h>
 #include <getopt.h>
 #include <time.h>
 #include <math.h>
 #include <omp.h>
-#include <cuda.h>
 #include <cuda_runtime.h>
 
 #include "lib/c_bound_simple.h"
@@ -29,7 +29,7 @@
 /*******************************************************************************
 Implementation of the parallel single-GPU PFSP search.
 *******************************************************************************/
-void pfsp_search(const int inst, const int lb, const int m, const int M, int *best, unsigned long long int *exploredTree,
+void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, int *best, unsigned long long int *exploredTree,
                  unsigned long long int *exploredSol, double *elapsedTime, double *timeGpuCpy, double *timeGpuMalloc,
                  double *timeGpuKer, double *timeGenChild)
 {
@@ -176,18 +176,52 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, int *be
       // each task generates and inserts its children nodes to the pool.
       // TODO: add OpenMP loop to parallelize multiple uses of generate_children
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChild);
-      int nb_threads = 1;
-#pragma omp parallel num_threads(nb_threads) shared(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, pool)
+
+      int threadPoolSize[D], parentsStart[D], childrenStart[D];
+      printf("\n pool.size[%d] poolSize[%d] threadPoolSize: ", pool.size, poolSize);
+      for (int l = 0; l < D; l++)
       {
-        // TODO: play with index now
-        int indexChildren;
-        // Node children[numBounds];
-        generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &pool, &indexChildren);
-#pragma omp critical
+        threadPoolSize[l] = poolSize / D; // Amount of parents nodes to be treated per thread
+        if (l < (poolSize % D))
+          threadPoolSize[l]++;
+
+        parentsStart[l] = 0;
+        for (int k = 0; k < l; k++)
+          parentsStart[l] += threadPoolSize[k];
+
+        childrenStart[l] = 0;
+        int totalParents = 0;
+        for (int k = 0; k < l; k++)
+          totalParents += threadPoolSize[k];
+        if (l > 0)
         {
-          pushBackBulkFree(&pool, children, indexChildren);
+          totalParents--;
+          childrenStart[l] = sumOffSets[totalParents];
         }
+        printf("%d ", threadPoolSize[l]);
       }
+      printf("\n");
+
+#pragma omp parallel num_threads(D) shared(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, pool, threadPoolSize, D)
+      {
+        int threadId = omp_get_thread_num();
+        // int num_procs = omp_get_num_procs();
+        // int cpu = sched_getcpu();
+        // printf("Thread %d of %d (D[%d]) sees %d processors, & cpu is %d\n", threadId, omp_get_num_threads(), D, num_procs, cpu);
+
+        int indexChildren;
+        //  generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &indexChildren);
+
+        printf("Thread[%d] parentsStart[%d] threadPoolSize[%d] childrenStart[%d]\n", threadId, parentsStart[threadId], threadPoolSize[threadId], childrenStart[threadId]);
+        generate_children(parents + parentsStart[threadId], children + childrenStart[threadId], threadPoolSize[threadId], jobs, bounds + childrenStart[threadId], exploredTree, exploredSol, best, &indexChildren);
+        printf("Thread[%d] indexChildren[%d]\n", threadId, indexChildren);
+
+#pragma omp critical
+        pushBackBulk(&pool, children + childrenStart[threadId], indexChildren);
+        // pushBackBulkFree(&pool, children, indexChildren);
+      }
+      printf("\n");
+      
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChild);
       *timeGenChild += (endGenChild.tv_sec - startGenChild.tv_sec) + (endGenChild.tv_nsec - startGenChild.tv_nsec) / 1e9;
 
@@ -280,7 +314,7 @@ int main(int argc, char *argv[])
 
   double elapsedTime = 0, timeGpuCpy = 0, timeGpuMalloc = 0, timeGpuKer = 0, timeGenChild = 0;
 
-  pfsp_search(inst, lb, m, M, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeGpuCpy, &timeGpuMalloc, &timeGpuKer, &timeGenChild);
+  pfsp_search(inst, lb, m, M, D, &optimum, &exploredTree, &exploredSol, &elapsedTime, &timeGpuCpy, &timeGpuMalloc, &timeGpuKer, &timeGenChild);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
