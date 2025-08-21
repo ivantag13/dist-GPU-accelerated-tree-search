@@ -154,6 +154,21 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       const int numBounds = sum;
       const int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
 
+      // const int nb_streams = 3;
+      // cudaStream_t streams[nb_streams];
+      // for (int i = 0; i < nb_streams; i++)
+      // {
+      //   cudaStreamCreate(&streams[i]);
+      // }
+
+      // cudaMemcpyAsync(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice, streams[0]);
+      // cudaMemcpyAsync(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice, streams[1]);
+      // cudaMemcpyAsync(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice, streams[2]);
+      // cudaDeviceSynchronize();
+      // for (int i = 0; i < nb_streams; i++)
+      // {
+      //   //cudaStreamDestroy(&streams[i]);
+      // }
       cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
       cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
       cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
@@ -178,7 +193,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       clock_gettime(CLOCK_MONOTONIC_RAW, &startGenChild);
 
       int threadPoolSize[D], parentsStart[D], childrenStart[D];
-      printf("\n pool.size[%d] poolSize[%d] threadPoolSize: ", pool.size, poolSize);
+      // printf("\n pool.size[%d] poolSize[%d] threadPoolSize: ", pool.size, poolSize);
       for (int l = 0; l < D; l++)
       {
         // Amount of parents nodes to be treated per OpenMP thread
@@ -196,37 +211,37 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           totalParents += threadPoolSize[k];
         if (l > 0)
         {
-          // totalParents--;
+          totalParents--;
           childrenStart[l] = sumOffSets[totalParents];
         }
-        printf("%d ", threadPoolSize[l]);
+        // printf("%d ", threadPoolSize[l]);
       }
-      printf("\n");
+      // printf("\n");
 
-      unsigned long long int localExploredTree = 0, localExploredSol = 0;
-      int localBest = *best;
-#pragma omp parallel num_threads(D) shared(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, pool, threadPoolSize, D) \
-    reduction(+ : localExploredSol, localExploredTree) reduction(min : localBest)
+#pragma omp parallel num_threads(D) shared(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, pool, threadPoolSize, D) // reduction(+ : localExploredSol, localExploredTree) reduction(min : localBest)
       {
-        int threadId = omp_get_thread_num();
         int indexChildren;
+        int threadId = omp_get_thread_num();
+        unsigned long long int localExploredTree = 0, localExploredSol = 0;
+        int localBest = *best;
         // int num_procs = omp_get_num_procs();   // int cpu = sched_getcpu();   // printf("Thread %d of %d (D[%d]) sees %d processors, & cpu is %d\n", threadId, omp_get_num_threads(), D, num_procs, cpu);
         //  generate_children(parents, children, poolSize, jobs, bounds, exploredTree, exploredSol, best, &indexChildren);
 
-        printf("Thread[%d] parentsStart[%d] threadPoolSize[%d] childrenStart[%d]\n", threadId, parentsStart[threadId], threadPoolSize[threadId], childrenStart[threadId]);
-        generate_children(parents + parentsStart[threadId], children + childrenStart[threadId], threadPoolSize[threadId], jobs, bounds + childrenStart[threadId], &localExploredTree, &localExploredSol, &localBest, &indexChildren);
-        printf("Thread[%d] indexChildren[%d]\n", threadId, indexChildren);
+        // printf("Thread[%d] parentsStart[%d] threadPoolSize[%d] childrenStart[%d]\n", threadId, parentsStart[threadId], threadPoolSize[threadId], childrenStart[threadId]);
+        generate_children(parents + parentsStart[threadId], children + childrenStart[threadId], threadPoolSize[threadId], jobs,
+                          bounds + childrenStart[threadId], &localExploredTree, &localExploredSol, &localBest, &indexChildren);
+        // printf("Thread[%d] indexChildren[%d]\n", threadId, indexChildren);
 
 #pragma omp critical
         {
-          pushBackBulk(&pool, children + childrenStart[threadId], indexChildren);
+          *exploredTree += localExploredTree;
+          *exploredSol += localExploredSol;
+          *best = MIN(*best, localBest);
+          pushBackBulkFree(&pool, children + childrenStart[threadId], indexChildren);
         }
         // pushBackBulkFree(&pool, children, indexChildren);
       } // End of OpenMP parallel region
-      *exploredTree += localExploredTree;
-      *exploredSol += localExploredSol;
-      *best = MIN(*best, localBest);
-      printf("\n");
+      // printf("\n");
 
       clock_gettime(CLOCK_MONOTONIC_RAW, &endGenChild);
       *timeGenChild += (endGenChild.tv_sec - startGenChild.tv_sec) + (endGenChild.tv_nsec - startGenChild.tv_nsec) / 1e9;
