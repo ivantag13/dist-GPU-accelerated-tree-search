@@ -46,7 +46,7 @@ LIBCOMMON := ../common
 # HIP_OBJECTS      := $(HIP_SOURCES:hip.cu=hip.o)
 
 # Executable names
-EXECUTABLES := pfsp_c.out pfsp_gpu_cuda.out pfsp_multigpu_cuda.out pfsp_dist_multigpu_cuda.out pfsp_gpu_hip.out pfsp_multigpu_hip.out pfsp_dist_multigpu_hip.out
+EXECUTABLES := pfsp_c.out pfsp_omp_c.out pfsp_gpu_cuda.out pfsp_multigpu_cuda.out pfsp_dist_multigpu_cuda.out pfsp_gpu_hip.out pfsp_multigpu_hip.out pfsp_dist_multigpu_hip.out
 
 # Build codes
 all: $(EXECUTABLES)
@@ -69,6 +69,10 @@ $(LIBCOMMON)/%.o: $(LIBCOMMON)/%.cu
 # Build executable for sequential in C
 pfsp_c.out: pfsp_c.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o
 	$(C_COMPILER) $(C_COMMON_OPTS) $^ -o $@ -lm
+
+# Build executable for CPU parallel in C
+pfsp_omp_c.out: pfsp_omp_c.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_statistic.o
+	$(C_COMPILER) $(C_COMMON_OPTS) -fopenmp $^ -o $@ -lm
 
 # Build executable for single-GPU in C+CUDA
 pfsp_gpu_cuda.out: pfsp_gpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/gpu_util.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib.o $(LIBPATH)/PFSP_statistic.o
