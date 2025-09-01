@@ -142,6 +142,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         int nbSteals = 0, nbSSteals = 0;
         SinglePool_atom *pool_loc;
         pool_loc = &multiPool[cpuID];
+        SinglePool_atom myPool;
+        initSinglePool_atom(&myPool);
+
         // int best_l = *best;
         bool taskState = BUSY;
 
@@ -162,7 +165,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
         // // Allocating parents vector on CPU and GPU
         // // TODO: look single-GPU file remark!
-        // Node *parents = (Node *)malloc(M * sizeof(Node));
+        Node *parents = (Node *)malloc(M * sizeof(Node));
         Node *stolenNodes = (Node *)malloc(5 * M * sizeof(Node));
         // Node *children = (Node *)malloc(jobs * M * sizeof(Node));
         // Node *parents_d;
@@ -185,25 +188,34 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         // endGpuMalloc = omp_get_wtime();
         // timeGpuMalloc[cpuID] = endGpuMalloc - startGpuMalloc;
 
+        int falseM = 5000;
         while (1)
         {
             // Each task gets its parenst nodes from the pool
             // startPoolOps = omp_get_wtime();
-            // int poolSize = popBackBulk(pool_loc, m, M, parents, 1);
+            int poolSize = popBackBulk(pool_loc, m, M, parents, 1);
             // endPoolOps = omp_get_wtime();
             // timePoolOps[cpuID] += endPoolOps - startPoolOps;
 
-            int hasWork = 0;
-            Node parent = popBack(&pool, &hasWork);
-            if (hasWork)
+            if (poolSize > 0)
             {
-                if (taskState == IDLE)
+                pushBackBulk(&myPool, parents, poolSize);
+                int hasWork = 1;
+                while (hasWork)
                 {
-                    taskState = BUSY;
-                    atomic_store(&eachTaskState[cpuID], BUSY);
-                }
+                    hasWork = 0;
+                    Node parent = popBackFree(&myPool, &hasWork);
+                    if (hasWork)
+                    {
+                        if (taskState == IDLE)
+                        {
+                            taskState = BUSY;
+                            atomic_store(&eachTaskState[cpuID], BUSY);
+                        }
 
-                decompose(jobs, lb, best, lbound1, lbound2, parent, exploredTree, exploredSol, pool_loc);
+                        decompose(jobs, lb, best, lbound1, lbound2, parent, &tree, &sol, &myPool);
+                    }
+                }
             }
             // if (poolSize > 0)
             // {
@@ -367,7 +379,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         // cudaFree(machine_pairs_1_d);
         // cudaFree(machine_pairs_2_d);
         // cudaFree(machine_pair_order_d);
-        // free(parents);
+        free(parents);
         // free(children);
         free(stolenNodes);
         // free(bounds);
