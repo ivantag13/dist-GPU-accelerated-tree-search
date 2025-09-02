@@ -131,19 +131,20 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                                                timeGpuCpy, timeGpuMalloc, timeGpuKer, timeGenChild, timePoolOps, timeGpuIdle, timeTermination) \
     reduction(min : best_l)
     {
-        double startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild,
-            startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination;
+        double startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination;
+        // startGpuCpy, endGpuCpy, startGenChild, endGenChild,
         int cpuID = omp_get_thread_num();
-        int num_procs = omp_get_num_procs();
-        int cpu = sched_getcpu();
-        printf("Thread %d sees %d processors, & cpu is %d\n", cpuID, num_procs, cpu);
+        // int num_procs = omp_get_num_procs();
+        // int cpu = sched_getcpu();
+        // printf("Thread %d sees %d processors, & cpu is %d\n", cpuID, num_procs, cpu);
 
         unsigned long long int tree = 0, sol = 0;
         int nbSteals = 0, nbSSteals = 0;
         SinglePool_atom *pool_loc;
         pool_loc = &multiPool[cpuID];
-        SinglePool_atom myPool;
-        initSinglePool_atom(&myPool);
+        SinglePool_atom parentsPool, childrenPool;
+        initSinglePool_atom(&parentsPool);
+        initSinglePool_atom(&childrenPool);
 
         // int best_l = *best;
         bool taskState = BUSY;
@@ -153,58 +154,38 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         pool.front = 0;
         pool.size = 0;
 
-        // startGpuMalloc = omp_get_wtime();
-        // // GPU bounding functions data
-        // lb1_bound_data lbound1_d;
-        // int *p_times_d, *min_heads_d, *min_tails_d;
-        // lb1_alloc_gpu(&lbound1_d, lbound1, p_times_d, min_heads_d, min_tails_d, jobs, machines);
-
-        // lb2_bound_data lbound2_d;
-        // int *johnson_schedule_d, *lags_d, *machine_pairs_1_d, *machine_pairs_2_d, *machine_pair_order_d;
-        // lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
-
-        // // Allocating parents vector on CPU and GPU
-        // // TODO: look single-GPU file remark!
-        Node *parents = (Node *)malloc(M * sizeof(Node));
+        startGpuMalloc = omp_get_wtime();
+        int falseM = 20000;
+        Node *parents = (Node *)malloc(falseM * sizeof(Node));
+        Node *children = (Node *)malloc(jobs * falseM * sizeof(Node));
         Node *stolenNodes = (Node *)malloc(5 * M * sizeof(Node));
-        // Node *children = (Node *)malloc(jobs * M * sizeof(Node));
-        // Node *parents_d;
-        // cudaMalloc((void **)&parents_d, M * sizeof(Node));
+        endGpuMalloc = omp_get_wtime();
+        timeGpuMalloc[cpuID] = endGpuMalloc - startGpuMalloc;
 
-        // int *sumOffSets = (int *)malloc(M * sizeof(int));
-        // int *sumOffSets_d;
-        // cudaMalloc((void **)&sumOffSets_d, M * sizeof(int));
-
-        // // Allocating bounds vector on CPU and GPU
-        // int *nodeIndex = (int *)malloc((jobs * M) * sizeof(int));
-        // int *nodeIndex_d;
-        // cudaMalloc((void **)&nodeIndex_d, (jobs * M) * sizeof(int));
-
-        // // Allocating bounds vector on CPU and GPU
-        // int *bounds = (int *)malloc((jobs * M) * sizeof(int));
-        // int *bounds_d;
-        // cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
-
-        // endGpuMalloc = omp_get_wtime();
-        // timeGpuMalloc[cpuID] = endGpuMalloc - startGpuMalloc;
-
-        int falseM = 5000;
         while (1)
         {
             // Each task gets its parenst nodes from the pool
-            // startPoolOps = omp_get_wtime();
-            int poolSize = popBackBulk(pool_loc, m, M, parents, 1);
-            // endPoolOps = omp_get_wtime();
-            // timePoolOps[cpuID] += endPoolOps - startPoolOps;
+            startPoolOps = omp_get_wtime();
+            int poolSize = popBackBulk(pool_loc, m, falseM, parents, 1);
+            endPoolOps = omp_get_wtime();
+            timePoolOps[cpuID] += endPoolOps - startPoolOps;
 
             if (poolSize > 0)
             {
-                pushBackBulk(&myPool, parents, poolSize);
+                startPoolOps = omp_get_wtime();
+                pushBackBulk(&parentsPool, parents, poolSize);
+                endPoolOps = omp_get_wtime();
+                timePoolOps[cpuID] += endPoolOps - startPoolOps;
+
                 int hasWork = 1;
+                if (best_l != *best)
+                    checkBest(&best_l, best, &bestLock);
+
+                startGpuKer = omp_get_wtime();
                 while (hasWork)
                 {
                     hasWork = 0;
-                    Node parent = popBackFree(&myPool, &hasWork);
+                    Node parent = popBackFree(&parentsPool, &hasWork);
                     if (hasWork)
                     {
                         if (taskState == IDLE)
@@ -213,68 +194,23 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                             atomic_store(&eachTaskState[cpuID], BUSY);
                         }
 
-                        decompose(jobs, lb, best, lbound1, lbound2, parent, &tree, &sol, &myPool);
+                        decompose(jobs, lb, best, lbound1, lbound2, parent, &tree, &sol, &childrenPool);
                     }
                 }
+                endGpuKer = omp_get_wtime();
+                timeGpuKer[cpuID] += endGpuKer - startGpuKer;
+
+                if (childrenPool.size > 0)
+                {
+                    startPoolOps = omp_get_wtime();
+                    int childrenSize = popBackBulkFree(&childrenPool, 1, childrenPool.size, children, 1);
+                    pushBackBulk(pool_loc, children, childrenSize);
+                    endPoolOps = omp_get_wtime();
+                    timePoolOps[cpuID] += endPoolOps - startPoolOps;
+                }
+                if (best_l != *best)
+                    checkBest(&best_l, best, &bestLock);
             }
-            // if (poolSize > 0)
-            // {
-            //     if (taskState == IDLE)
-            //     {
-            //         taskState = BUSY;
-            //         atomic_store(&eachTaskState[cpuID], BUSY);
-            //     }
-
-            //     // startGpuCpy = omp_get_wtime();
-            //     // int sum = 0;
-            //     // int diff;
-            //     // int i, j;
-            //     // for (i = 0; i < poolSize; i++)
-            //     // {
-            //     //     diff = jobs - parents[i].depth;
-            //     //     for (j = 0; j < diff; j++)
-            //     //         nodeIndex[j + sum] = i;
-            //     //     sum += diff;
-            //     //     sumOffSets[i] = sum;
-            //     // }
-
-            //     // int numBounds = sum;
-            //     // int nbBlocks = ceil((double)numBounds / BLOCK_SIZE);
-
-            //     // cudaMemcpy(parents_d, parents, poolSize * sizeof(Node), cudaMemcpyHostToDevice);
-            //     // cudaMemcpy(sumOffSets_d, sumOffSets, poolSize * sizeof(int), cudaMemcpyHostToDevice);
-            //     // cudaMemcpy(nodeIndex_d, nodeIndex, numBounds * sizeof(int), cudaMemcpyHostToDevice);
-            //     // endGpuCpy = omp_get_wtime();
-            //     // timeGpuCpy[cpuID] += endGpuCpy - startGpuCpy;
-            //     // // numBounds is the 'size' of the problem
-            //     // startGpuKer = omp_get_wtime();
-            //     // evaluate_gpu(jobs, lb, numBounds, nbBlocks, poolSize, best, lbound1_d, lbound2_d, parents_d, bounds_d, sumOffSets_d, nodeIndex_d);
-            //     // cudaDeviceSynchronize();
-            //     // endGpuKer = omp_get_wtime();
-            //     // timeGpuKer[cpuID] += endGpuKer - startGpuKer;
-
-            //     // startGpuCpy = omp_get_wtime();
-            //     // cudaMemcpy(bounds, bounds_d, numBounds * sizeof(int), cudaMemcpyDeviceToHost);
-            //     // endGpuCpy = omp_get_wtime();
-            //     // timeGpuCpy[cpuID] += endGpuCpy - startGpuCpy;
-
-            //     // // Each task generates and inserts its children nodes to the pool.
-            //     // startGenChild = omp_get_wtime();
-            //     // if (best_l != *best)
-            //     //     checkBest(&best_l, best, &bestLock);
-            //     // int indexChildren;
-            //     // generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, &indexChildren);
-            //     // if (best_l != *best)
-            //     //     checkBest(&best_l, best, &bestLock);
-            //     // endGenChild = omp_get_wtime();
-            //     // timeGenChild[cpuID] += endGenChild - startGenChild;
-
-            //     // startPoolOps = omp_get_wtime();
-            //     // pushBackBulk(pool_loc, children, indexChildren);
-            //     // genChildGPU[cpuID] += indexChildren;
-            //     // endPoolOps = omp_get_wtime();
-            //     // timePoolOps[cpuID] += endPoolOps - startPoolOps;
-            // }
             else
             {
                 if (ws == 0)
@@ -305,16 +241,15 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                                 if (atomic_compare_exchange_strong(&(victim->lock), &expected, true))
                                 { // get the lock
                                     int size = victim->size;
+
                                     if (size >= 2 * m)
                                     {
-                                        // Higher value for parameter M allows real application of steal-half strategy
+                                        //  Higher value for parameter M allows real application of steal-half strategy
                                         int stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
-                                        // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
 
                                         if (stolenNodesSize == 0)
                                         {                                         // safety check
                                             atomic_store(&(victim->lock), false); // reset lock
-                                            printf("\nThread [%d] DEADCODE\n", cpuID);
                                             exit(-1);
                                         }
 
@@ -367,24 +302,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         }
 
         // Freeing variables from OpenMP environment
-        // cudaFree(parents_d);
-        // cudaFree(bounds_d);
-        // cudaFree(sumOffSets_d);
-        // cudaFree(nodeIndex_d);
-        // cudaFree(p_times_d);
-        // cudaFree(min_heads_d);
-        // cudaFree(min_tails_d);
-        // cudaFree(johnson_schedule_d);
-        // cudaFree(lags_d);
-        // cudaFree(machine_pairs_1_d);
-        // cudaFree(machine_pairs_2_d);
-        // cudaFree(machine_pair_order_d);
         free(parents);
-        // free(children);
+        free(children);
         free(stolenNodes);
-        // free(bounds);
-        // free(sumOffSets);
-        // free(nodeIndex);
 
 #pragma omp critical
         {
@@ -406,6 +326,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             }
         }
         deleteSinglePool_atom(pool_loc);
+        deleteSinglePool_atom(&parentsPool);
+        deleteSinglePool_atom(&childrenPool);
     } // End of parallel region
 
     *best = best_l;
