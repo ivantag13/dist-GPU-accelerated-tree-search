@@ -120,9 +120,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     is not enough work.
   */
 
+  unsigned long long int eachExpTree[D], eachExpSol[D];
   SinglePool_atom multiPool[D];
   for (int i = 0; i < D; i++)
+  {
     initSinglePool_atom(&multiPool[i]);
+    eachExpTree[i] = 0;
+    eachExpSol[i] = 0;
+  }
   int best_l = *best;
 
 #pragma omp parallel num_threads(D) shared(bestLock, eachTaskState, allTasksIdleFlag, pool, multiPool,                                         \
@@ -200,6 +205,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     endGpuMalloc = omp_get_wtime();
     timeGpuMalloc[0] = endGpuMalloc - startGpuMalloc;
 
+    int counter = 0;
+
     while (1)
     {
       // Each task gets its parenst nodes from the pool
@@ -232,6 +239,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               decompose(jobs, cpulb, best, lbound1, lbound2, parent, &tree, &sol, &childrenPool);
             }
           }
+          eachExpTree[cpuID] = tree;
+          eachExpSol[cpuID] = sol;
+          
           if (childrenPool.size > 0)
           {
             int childrenSize = popBackBulkFree(&childrenPool, 1, childrenPool.size, children, 1);
@@ -296,6 +306,23 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           genChildGPU[cpuID] += indexChildren;
           endPoolOps = omp_get_wtime();
           timePoolOps[cpuID] += endPoolOps - startPoolOps;
+          eachExpTree[cpuID] = tree;
+          eachExpSol[cpuID] = sol;
+
+          if (counter % 2000 == 0)
+          {
+            endTime = omp_get_wtime();
+            double t2 = endTime - startTime;
+            unsigned long long int partialExpTree = 0, partialExpSol = 0;
+            for (int m = 0; m < D; m++)
+            {
+              partialExpTree += eachExpTree[m];
+              partialExpSol += eachExpSol[m];
+            }
+            printf("Counter[%d]: Tree[%llu] Sol[%llu]\n Pool: size[%d] capacity[%d] poolSize[%d]\n Timer: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n",
+                   counter, partialExpTree, partialExpSol, pool_loc->size, pool_loc->capacity, poolSize, t2, *timeGpuCpy, *timeGpuMalloc, *timeGpuKer, *timeGenChild);
+          }
+          counter++;
         }
       }
       else
