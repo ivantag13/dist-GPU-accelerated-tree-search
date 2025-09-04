@@ -159,14 +159,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     pool.front = 0;
     pool.size = 0;
 
-    int falseM = 20000;
+    int falseM = 5000;
     Node *parents;
-    if (cpuID == 0)
-      parents = (Node *)malloc(M * sizeof(Node));
-    else
-      parents = (Node *)malloc(falseM * sizeof(Node));
+    // if (cpuID == 0)
+    parents = (Node *)malloc(M * sizeof(Node));
+    // else
+    //   parents = (Node *)malloc(falseM * sizeof(Node));
 
-    Node *children = (Node *)malloc(jobs * falseM * sizeof(Node));
+    Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *stolenNodes = (Node *)malloc(5 * M * sizeof(Node));
 
     startTime = omp_get_wtime();
@@ -241,7 +241,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           }
           eachExpTree[cpuID] = tree;
           eachExpSol[cpuID] = sol;
-          
+
           if (childrenPool.size > 0)
           {
             int childrenSize = popBackBulkFree(&childrenPool, 1, childrenPool.size, children, 1);
@@ -360,7 +360,12 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                   {
                     // printf("Victim[%d]->size[%d] & size[%d]\n", victimID, victim->size, size);
                     //  Higher value for parameter M allows real application of steal-half strategy
-                    int stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
+                    int stolenNodesSize;
+                    if (cpuID == 0)
+                      stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
+                    else
+                      stolenNodesSize = popBackBulkFree(victim, m, 4 * falseM, stolenNodes, 2); // ratio is 2
+
                     // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
 
                     if (stolenNodesSize == 0)
