@@ -1,5 +1,5 @@
 /*
-  Single-GPU Parallel CPU B&B to solve Taillard instances of the PFSP in C+OpenMP+CUDA.
+  Multi-core Multi-GPU Parallel CPU B&B to solve Taillard instances of the PFSP in C+OpenMP+CUDA.
 */
 
 #include <stdio.h>
