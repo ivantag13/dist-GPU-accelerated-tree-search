@@ -122,7 +122,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     int NB_THREADS_GPU = (nb_procs / MAX_GPU);
     int NB_THREADS_MAX = D * NB_THREADS_GPU;
     
-    printf("Proc[%d] Num_procs[%d] MAX_GPU[%d] NB_THREADS_GPU[%d] NB_THREADS_MAX[%d]\n", MPIRank, nb_procs, MAX_GPU, NB_THREADS_GPU, NB_THREADS_MAX);
+    //printf("Proc[%d] Num_procs[%d] MAX_GPU[%d] NB_THREADS_GPU[%d] NB_THREADS_MAX[%d]\n", MPIRank, nb_procs, MAX_GPU, NB_THREADS_GPU, NB_THREADS_MAX);
     
     // Initialize problem parameters
     int jobs = taillard_get_nb_jobs(inst);
@@ -335,7 +335,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             if (best_all < *best)
             checkBest(&best_all, best, &bestLock);
             
-            global_termination_flag = globalTermination(commSize, D, multiPool, poolSizes_all, m);
+            global_termination_flag = globalTermination(commSize, NB_THREADS_COMPUTE, multiPool, poolSizes_all, m);
             
             // No global termination, then work sharing
             if (!global_termination_flag)
@@ -386,7 +386,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             if (best_all < *best)
             checkBest(&best_all, best, &bestLock);
             
-            global_termination_flag = globalTermination(commSize, D, multiPool, poolSizes_all, m);
+            global_termination_flag = globalTermination(commSize, NB_THREADS_COMPUTE, multiPool, poolSizes_all, m);
             
             // No global termination, then work stealing
             if (!global_termination_flag)
@@ -726,7 +726,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         {
           if (gpuID != NB_THREADS_COMPUTE)
           {
-            printf("Proc[%d] Thread[%d] best_l[%d] best[%d]\n", MPIRank, gpuID, best_l, *best);
+            //printf("Proc[%d] Thread[%d] best_l[%d] best[%d]\n", MPIRank, gpuID, best_l, *best);
             nbStealsGPU[gpuID] = nbSteals;
             nbSStealsGPU[gpuID] = nbSSteals;
             expTreeGPU[gpuID] = tree;
