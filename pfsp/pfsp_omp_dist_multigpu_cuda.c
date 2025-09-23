@@ -245,7 +245,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
         double startGpuCpy, endGpuCpy, startGpuMalloc, endGpuMalloc, startGpuKer, endGpuKer, startGenChild, endGenChild,
         startPoolOps, endPoolOps, startGpuIdle, endGpuIdle, startTermination, endTermination, startLoadBal, endLoadBal;
         int gpuID = omp_get_thread_num(), nbSteals = 0, nbSSteals = 0;
-        
+        int cpulb = lb;
+        if (lb == 1)
+        cpulb = 0;
         // Debug: printf("Debug: Proc[%d] Thread[%d] Mark[%d]\n", MPIRank, gpuID, mark); // TODO: Check like JP was doing it
         
         if (gpuID != NB_THREADS_COMPUTE) // gpuID == D does not manage a GPU!!!
@@ -478,7 +480,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             //timePoolOps[gpuID] += endPoolOps - startPoolOps;
             
             int poolSize;
-            if (cpuID % NB_THREADS_GPU != 0)
+            if (gpuID % NB_THREADS_GPU != 0)
             poolSize = popBackBulk(pool_loc, m, falseM, parents, 1);
             else
             poolSize = popBackBulk(pool_loc, m, M, parents, 1);
@@ -504,8 +506,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     decompose(jobs, cpulb, best, lbound1, lbound2, parent, &tree, &sol, &childrenPool);
                   }
                 }
-                eachExpTree[gpuID] = tree;
-                eachExpSol[gpuID] = sol;
+                expTreeGPU[gpuID] = tree;
+                expSolGPU[gpuID] = sol;
                 
                 if (childrenPool.size > 0)
                 {
@@ -560,7 +562,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 if (best_l != *best)
                 checkBest(&best_l, best, &bestLock);
                 int indexChildren;
-                generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+                generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, &indexChildren);
                 if (best_l != *best)
                 checkBest(&best_l, best, &bestLock);
                 endGenChild = omp_get_wtime();
