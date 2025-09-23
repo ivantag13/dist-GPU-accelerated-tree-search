@@ -504,7 +504,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           if (best_l != *best)
             checkBest(&best_l, best, &bestLock);
           int indexChildren;
-          generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, pool_loc, &indexChildren);
+          generate_children(parents, children, poolSize, jobs, bounds, &tree, &sol, &best_l, &indexChildren);
           if (best_l != *best)
             checkBest(&best_l, best, &bestLock);
           endGenChild = omp_get_wtime();
