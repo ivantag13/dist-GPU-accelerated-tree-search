@@ -485,6 +485,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             else
             poolSize = popBackBulk(pool_loc, m, M, parents, 1);
             
+            poolSizes_all[gpuID] = poolSize;
+
             if (poolSize > 0)
             {
               if (gpuID % NB_THREADS_GPU != 0)
