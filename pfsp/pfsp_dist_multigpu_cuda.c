@@ -61,7 +61,7 @@ void create_mpi_node_type(MPI_Datatype *mpi_node_type)
   offsets[1] = offsetof(Node, limit1);
   offsets[2] = offsetof(Node, prmu);
 
-  MPI_Datatype types[3] = {MPI_UINT8_T, MPI_INT, MPI_INT};
+  MPI_Datatype types[3] = {MPI_INT16_T, MPI_INT16_T, MPI_INT16_T};
   MPI_Type_create_struct(3, blocklengths, offsets, types, mpi_node_type);
   MPI_Type_commit(mpi_node_type);
 }
