@@ -63,7 +63,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   int NB_THREADS_GPU = (nb_procs / MAX_GPU);
   int NB_THREADS_MAX = D * NB_THREADS_GPU;
 
-  printf("Num_procs[%d] MAX_GPU[%d] NB_THREADS_GPU[%d] NB_THREADS_MAX[%d]\n", nb_procs, MAX_GPU, NB_THREADS_GPU, NB_THREADS_MAX);
+  //printf("Num_procs[%d] MAX_GPU[%d] NB_THREADS_GPU[%d] NB_THREADS_MAX[%d]\n", nb_procs, MAX_GPU, NB_THREADS_GPU, NB_THREADS_MAX);
 
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
@@ -318,19 +318,19 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           eachExpTree[cpuID] = tree;
           eachExpSol[cpuID] = sol;
 
-          if (counter % 10000 == 0)
-          {
-            endTime = omp_get_wtime();
-            double t2 = endTime - startTime;
-            unsigned long long int partialExpTree = 0, partialExpSol = 0;
-            for (int m = 0; m < NB_THREADS_MAX; m++)
-            {
-              partialExpTree += eachExpTree[m];
-              partialExpSol += eachExpSol[m];
-            }
-            printf("Counter[%d] GPU[%d]: Tree[%llu] Sol[%llu]\n Pool: size[%d] capacity[%d] poolSize[%d]\n Timer: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n",
-                   counter, cpuID, partialExpTree, partialExpSol, pool_loc->size, pool_loc->capacity, poolSize, t2, timeGpuCpy[cpuID], timeGpuMalloc[cpuID], timeGpuKer[cpuID], timeGenChild[cpuID]);
-          }
+          // if (counter % 10000 == 0)
+          // {
+          //   endTime = omp_get_wtime();
+          //   double t2 = endTime - startTime;
+          //   unsigned long long int partialExpTree = 0, partialExpSol = 0;
+          //   for (int m = 0; m < NB_THREADS_MAX; m++)
+          //   {
+          //     partialExpTree += eachExpTree[m];
+          //     partialExpSol += eachExpSol[m];
+          //   }
+          //   printf("Counter[%d] GPU[%d]: Tree[%llu] Sol[%llu]\n Pool: size[%d] capacity[%d] poolSize[%d]\n Timer: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n",
+          //          counter, cpuID, partialExpTree, partialExpSol, pool_loc->size, pool_loc->capacity, poolSize, t2, timeGpuCpy[cpuID], timeGpuMalloc[cpuID], timeGpuKer[cpuID], timeGenChild[cpuID]);
+          // }
           counter++;
         }
       }

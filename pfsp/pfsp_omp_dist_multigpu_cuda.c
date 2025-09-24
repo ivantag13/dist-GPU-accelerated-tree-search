@@ -770,7 +770,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       *best = best_l;                                                                         // Best known upper-bound within each MPI process
       MPI_Allreduce(&best_l, best, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);                      // Take minimum between all between best known upper-bounds
       best_l = *best;                                                                         // Best known upper bound among all MPI processes
-      printf("Proc[%d] best_l[%d] best[%d]\n", MPIRank, best_l, *best);
+      //printf("Proc[%d] best_l[%d] best[%d]\n", MPIRank, best_l, *best);
       
       MPI_Gather(expTreeGPU, NB_THREADS_MAX, MPI_UNSIGNED_LONG_LONG, all_expTreeGPU, NB_THREADS_MAX, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
       MPI_Gather(expSolGPU, NB_THREADS_MAX, MPI_UNSIGNED_LONG_LONG, all_expSolGPU, NB_THREADS_MAX, MPI_UNSIGNED_LONG_LONG, 0, MPI_COMM_WORLD);
