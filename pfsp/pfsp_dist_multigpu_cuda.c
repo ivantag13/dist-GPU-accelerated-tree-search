@@ -662,7 +662,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     {
       if (gpuID != D)
       {
-        printf("Proc[%d] Thread[%d] best_l[%d] best[%d]\n", MPIRank, gpuID, best_l, *best);
+        //printf("Proc[%d] Thread[%d] best_l[%d] best[%d]\n", MPIRank, gpuID, best_l, *best);
         nbStealsGPU[gpuID] = nbSteals;
         nbSStealsGPU[gpuID] = nbSSteals;
         expTreeGPU[gpuID] = tree;
