@@ -346,7 +346,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               permute(victims, D);
               for (int j = 0; j < D; j++)
               {
-                int gpuVictim = victim[j] * NB_THREADS_GPU;
+                int gpuVictim = victims[j] * NB_THREADS_GPU;
                 sendNodesSize = popBackBulk(&multiPool[gpuVictim], m, distRatio * M, sendNodes, 2);
                 if (sendNodesSize > 0)
                 {
@@ -410,7 +410,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                 permute(victims, D);
                 for (int j = 0; j < D; j++)
                 {
-                  int gpuVictim = victim[j] * NB_THREADS_GPU;
+                  int gpuVictim = victims[j] * NB_THREADS_GPU;
                   sendNodesSize = popBackBulk(&multiPool[gpuVictim], m, distRatio * M, sendNodes, 2);
                   if (sendNodesSize > 0)
                   break;
