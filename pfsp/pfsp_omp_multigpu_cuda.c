@@ -1,5 +1,5 @@
 /*
-  Multi-core Multi-GPU Parallel CPU B&B to solve Taillard instances of the PFSP in C+OpenMP+CUDA.
+  Multi-core Multi-GPU Parallel B&B to solve Taillard instances of the PFSP based on OpenMP+CUDA written in C language.
 */
 
 #include <stdio.h>
@@ -52,19 +52,12 @@ void checkBest(int *best_l, int *best, _Atomic bool *bestLock)
 /*******************************************************************************
 Implementation of the parallel CPU PFSP search.
 *******************************************************************************/
-void pfsp_search(const int inst, const int lb, const int m, const int M, const int D, const double perc, int ws, int *best,
+void pfsp_search(const int inst, const int lb, const int m, const int M, const int T, const int D, const int C, const double perc, int ws, int *best,
                  unsigned long long int *exploredTree, unsigned long long int *exploredSol, double *elapsedTime, unsigned long long int *expTreeGPU,
                  unsigned long long int *expSolGPU, unsigned long long int *genChildGPU, unsigned long long int *nbStealsGPU, unsigned long long int *nbSStealsGPU,
                  unsigned long long int *nbTerminationGPU, double *timeGpuCpy, double *timeGpuMalloc, double *timeGpuKer, double *timeGenChild,
                  double *timePoolOps, double *timeGpuIdle, double *timeTermination)
 {
-  int nb_procs = omp_get_num_procs();
-  int MAX_GPU = 8;
-  int NB_THREADS_GPU = (nb_procs / MAX_GPU);
-  int NB_THREADS_MAX = D * NB_THREADS_GPU;
-
-  //printf("Num_procs[%d] MAX_GPU[%d] NB_THREADS_GPU[%d] NB_THREADS_MAX[%d]\n", nb_procs, MAX_GPU, NB_THREADS_GPU, NB_THREADS_MAX);
-
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
@@ -78,6 +71,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   pushBack(&pool, root);
 
+  int NB_THREADS_MAX = D + C;
   // Boolean variables for termination detection
   _Atomic bool bestLock = false;
   _Atomic bool allTasksIdleFlag = false;
@@ -105,7 +99,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     Step 1: We perform a partial breadth-first search on CPU in order to create
     a sufficiently large amount of work for GPU computation.
   */
-
   while (pool.size < NB_THREADS_MAX * m)
   {
     int hasWork = 0;
@@ -150,8 +143,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     if (lb == 1)
       cpulb = 0;
 
-    if (cpuID % NB_THREADS_GPU == 0)
-      cudaSetDevice(cpuID / NB_THREADS_GPU);
+    if (D > 0 && cpuID >= C)
+      cudaSetDevice(cpuID - C);
 
     unsigned long long int tree = 0, sol = 0;
     int nbSteals = 0, nbSSteals = 0;
@@ -168,8 +161,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 #pragma omp barrier
     pool.front = 0;
     pool.size = 0;
-
-    int falseM = 5000;
 
     startTime = omp_get_wtime();
 
@@ -194,7 +185,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // Allocating parents vector on CPU and GPU
     // TODO: look single-GPU file remark!
     Node *parents_d;
-    if (cpuID % NB_THREADS_GPU == 0)
+    if (D > 0 && cpuID >= C)
       cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
     int *sumOffSets = (int *)malloc(M * sizeof(int));
@@ -222,14 +213,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
       int poolSize; // one variable per each?
 
-      if (cpuID % NB_THREADS_GPU != 0)
-        poolSize = popBackBulk(pool_loc, m, falseM, parents, 1);
-      else
+      if (C > 0 && cpuID < C)
+        poolSize = popBackBulk(pool_loc, m, T, parents, 1);
+      else if (D > 0 && cpuID >= C)
         poolSize = popBackBulk(pool_loc, m, M, parents, 1);
 
       if (poolSize > 0)
       {
-        if (cpuID % NB_THREADS_GPU != 0)
+        if (C > 0 && cpuID < C)
         {
           // CPU computation
           pushBackBulk(&parentsPool, parents, poolSize);
@@ -257,7 +248,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             pushBackBulk(pool_loc, children, childrenSize);
           }
         }
-        else
+        else if (D > 0 && cpuID >= C)
         {
           // GPU computation
           if (taskState == IDLE)
@@ -372,10 +363,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     // int stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
                     // Node *p = popFrontBulkFree(victim, m, M, &nodeSize, perc);
                     int stolenNodesSize;
-                    if (cpuID % NB_THREADS_GPU == 0)
+                    if (D > 0 && cpuID >= C)
                       stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
-                    else
-                      stolenNodesSize = popBackBulkFree(victim, m, 4 * falseM, stolenNodes, 2); // ratio is 2
+                    else if (C > 0 && cpuID < C)
+                      stolenNodesSize = popBackBulkFree(victim, m, 4 * T, stolenNodes, 2); // ratio is 2
 
                     if (stolenNodesSize == 0)
                     { // safety check
@@ -518,19 +509,29 @@ int main(int argc, char *argv[])
   srand(time(NULL));
   int version = 2; // Multi-GPU version is code 2
   // Parallel PFSP only uses: inst, lb, ub, m, M, D, ws
-  int inst, lb, ub, m, M, D, ws, LB, commSize = 1; // commSize is an artificial variable here
+  int inst, lb, ub, m, M, T, D, C, ws, LB, commSize = 1; // commSize is an artificial variable here
   double perc;
-  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &ws, &LB, &perc);
+
+  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &T, &D, &C, &ws, &LB, &perc);
+
+  int nb_proc = omp_get_num_procs();
+  int NB_THREADS_MAX = D + C;
+  if (NB_THREADS_MAX > nb_proc)
+  {
+    printf("Execution Terminated. More processing units requested than the ones available\n");
+    exit(1);
+  }
+
+  if (NB_THREADS_MAX == 0)
+  {
+    printf("No processing units requested. Please set C or D to 1\n");
+    exit(1);
+  }
 
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
 
-  print_settings(inst, machines, jobs, ub, lb, D, ws, commSize, LB, version);
-
-  int nb_procs = omp_get_num_procs();
-  int MAX_GPU = 8;
-  int NB_THREADS_GPU = (nb_procs / MAX_GPU);
-  int NB_THREADS_MAX = D * NB_THREADS_GPU;
+  print_settings(inst, machines, jobs, ub, lb, D, C, ws, commSize, LB, version);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
   unsigned long long int exploredTree = 0, exploredSol = 0;
@@ -558,13 +559,13 @@ int main(int argc, char *argv[])
     nbTerminationCPU[i] = 0;
   }
 
-  pfsp_search(inst, lb, m, M, D, perc, ws, &optimum, &exploredTree, &exploredSol, &elapsedTime,
+  pfsp_search(inst, lb, m, M, T, D, C, perc, ws, &optimum, &exploredTree, &exploredSol, &elapsedTime,
               expTreeCPU, expSolCPU, genChildCPU, nbStealsCPU, nbSStealsCPU, nbTerminationCPU,
               timeGpuCpy, timeGpuMalloc, timeCpuKer, timeGenChild, timePoolOps, timeCpuIdle, timeTermination);
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-  print_results_file_multi_gpu(inst, lb, NB_THREADS_MAX, ws, optimum, m, M, exploredTree, exploredSol, elapsedTime,
+  print_results_file_multi_gpu(inst, lb, D, C, ws, optimum, m, M, T, exploredTree, exploredSol, elapsedTime,
                                expTreeCPU, expSolCPU, genChildCPU, nbStealsCPU, nbSStealsCPU, nbTerminationCPU,
                                timeGpuCpy, timeGpuMalloc, timeCpuKer, timeGenChild, timePoolOps, timeCpuIdle, timeTermination);
 

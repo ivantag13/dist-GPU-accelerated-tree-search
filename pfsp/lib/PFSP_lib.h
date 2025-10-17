@@ -94,12 +94,12 @@ extern "C"
     *index = childrenIndex;
   }
 
-  void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, int ws, const int commSize, const int LB, const int version);
+  void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, const int C, int ws, const int commSize, const int LB, const int version);
 
   void print_results(const int optimum, const unsigned long long int exploredTree,
                      const unsigned long long int exploredSol, const double timer);
 
-  void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, int *ws, int *L, double *perc);
+  void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *T, int *D, int *C, int *ws, int *L, double *perc);
 
 #ifdef __cplusplus
 }

@@ -4,9 +4,11 @@ Implementation of PFSP Statistic Storage and Analysis.
 #include "PFSP_statistic.h"
 
 // Print an array of unsigned long long as a JSON-style string
-void PRINT_ULL_ARRAY(FILE *file, const unsigned long long *arr, int size) {
+void PRINT_ULL_ARRAY(FILE *file, const unsigned long long *arr, int size)
+{
     fprintf(file, "\"[");
-    for (int i = 0; i < size; ++i) {
+    for (int i = 0; i < size; ++i)
+    {
         fprintf(file, "%llu", arr[i]);
         if (i != size - 1)
             fprintf(file, ",");
@@ -15,9 +17,11 @@ void PRINT_ULL_ARRAY(FILE *file, const unsigned long long *arr, int size) {
 }
 
 // Print an array of doubles as a JSON-style string
-void PRINT_DOUBLE_ARRAY(FILE *file, const double *arr, int size) {
+void PRINT_DOUBLE_ARRAY(FILE *file, const double *arr, int size)
+{
     fprintf(file, "\"[");
-    for (int i = 0; i < size; ++i) {
+    for (int i = 0; i < size; ++i)
+    {
         fprintf(file, "%.4f", arr[i]);
         if (i != size - 1)
             fprintf(file, ",");
@@ -55,7 +59,7 @@ void print_results_file_single_gpu(const int inst, const int lb, const int optim
 }
 
 void print_results_file_multi_gpu(
-    const int inst, const int lb, const int D, int ws, const int optimum, const int m, const int M,
+    const int inst, const int lb, const int D, const int C, int ws, const int optimum, const int m, const int M, const int T,
     const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
     unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildGPU,
     unsigned long long int *nbStealsGPU, unsigned long long int *nbSStealsGPU, unsigned long long int *nbTerminationGPU,
@@ -63,6 +67,8 @@ void print_results_file_multi_gpu(
     double *timeGpuIdle, double *timeTermination)
 {
     FILE *file = fopen("multigpu.csv", "a");
+
+    int NB_THREADS_MAX = D + C;
 
     // Write header only once
     static int header_written = 0;
@@ -73,7 +79,7 @@ void print_results_file_multi_gpu(
         if (size == 0)
         {
             fprintf(file,
-                    "instance_id,nb_device,lower_bound,work_stealing,optimum,m,M,total_time,total_tree,total_sol,"
+                    "instance_id,D,C,lower_bound,work_stealing,optimum,m,M,T,total_time,total_tree,total_sol,"
                     "exp_tree_gpu,exp_sol_gpu,gen_child_gpu,steals_gpu,success_steals_gpu,termination_gpu,"
                     "gpu_memcpy_time,gpu_malloc_time,gpu_kernel_time,gpu_gen_child_time,pool_ops_time,gpu_idle_time,termination_time\n");
         }
@@ -81,23 +87,23 @@ void print_results_file_multi_gpu(
     }
 
     // Write scalar values
-    fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
-            inst, D, lb, ws, optimum, m, M, timer, exploredTree, exploredSol);
+    fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
+            inst, D, C, lb, ws, optimum, m, M, T, timer, exploredTree, exploredSol);
 
     // Arrays
-    PRINT_ULL_ARRAY(file, expTreeGPU, D);
-    PRINT_ULL_ARRAY(file, expSolGPU, D);
-    PRINT_ULL_ARRAY(file, genChildGPU, D);
-    PRINT_ULL_ARRAY(file, nbStealsGPU, D);
-    PRINT_ULL_ARRAY(file, nbSStealsGPU, D);
-    PRINT_ULL_ARRAY(file, nbTerminationGPU, D);
-    PRINT_DOUBLE_ARRAY(file, timeGpuCpy, D);
-    PRINT_DOUBLE_ARRAY(file, timeGpuMalloc, D);
-    PRINT_DOUBLE_ARRAY(file, timeGpuKer, D);
-    PRINT_DOUBLE_ARRAY(file, timeGenChild, D);
-    PRINT_DOUBLE_ARRAY(file, timePoolOps, D);
-    PRINT_DOUBLE_ARRAY(file, timeGpuIdle, D);
-    PRINT_DOUBLE_ARRAY(file, timeTermination, D);
+    PRINT_ULL_ARRAY(file, expTreeGPU, NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, expSolGPU, NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, genChildGPU, NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, nbStealsGPU, NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, nbSStealsGPU, NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, nbTerminationGPU, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timeGpuCpy, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timeGpuMalloc, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timeGpuKer, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timeGenChild, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timePoolOps, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timeGpuIdle, NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, timeTermination, NB_THREADS_MAX);
 
     // Finalize the row
     fprintf(file, "\n");
