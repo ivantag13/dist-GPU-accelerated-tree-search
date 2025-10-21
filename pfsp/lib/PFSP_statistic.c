@@ -113,15 +113,15 @@ void print_results_file_multi_gpu(
 }
 
 void print_results_file_dist_multi_gpu(
-    const int inst, const int lb, const int D, const int w, const int commSize, const int optimum, const int m, const int M,
-    const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
+    const int inst, const int lb, const int D, const int C, const int LB, const int commSize, const int optimum, const int m, const int M,
+    const int T, const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
     unsigned long long int *all_expTreeGPU, unsigned long long int *all_expSolGPU, unsigned long long int *all_genChildGPU,
     unsigned long long int *all_nbStealsGPU, unsigned long long int *all_nbSStealsGPU, unsigned long long int *all_nbTerminationGPU,
     unsigned long long int *nbSDistLoadBal, double *all_timeGpuCpy, double *all_timeGpuMalloc, double *all_timeGpuKer,
     double *all_timeGenChild, double *all_timePoolOps, double *all_timeGpuIdle, double *all_timeTermination, double *timeLoadBal)
 {
     FILE *file = fopen("dist_multigpu.csv", "a");
-
+    int NB_THREADS_MAX = D * C;
     // Write header if file is new
     static int header_written = 0;
     if (!header_written)
@@ -130,7 +130,7 @@ void print_results_file_dist_multi_gpu(
         if (ftell(file) == 0)
         {
             fprintf(file,
-                    "instance_id,nb_device,comm_size,lower_bound,load_balancing,optimum,m,M,total_time,total_tree,total_sol,"
+                    "instance_id,D,C,comm_size,lower_bound,load_balancing,optimum,m,M,T,total_time,total_tree,total_sol,"
                     "all_exp_tree_gpu,all_exp_sol_gpu,all_gen_child_gpu,all_steals_gpu,all_success_steals_gpu,all_termination_gpu,all_dist_load_bal,"
                     "all_gpu_memcpy_time,all_gpu_malloc_time,all_gpu_kernel_time,all_gpu_gen_child_time,all_pool_ops_time,all_gpu_idle_time,all_termination_time,all_time_load_bal\n");
         }
@@ -138,25 +138,25 @@ void print_results_file_dist_multi_gpu(
     }
 
     // Write scalars
-    fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
-            inst, D, commSize, lb, w, optimum, m, M, timer, exploredTree, exploredSol);
+    fprintf(file, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%llu,%llu,",
+            inst, D, C, commSize, lb, LB, optimum, m, M, T, timer, exploredTree, exploredSol);
 
     // Write array fields
-    PRINT_ULL_ARRAY(file, all_expTreeGPU, commSize * D);
-    PRINT_ULL_ARRAY(file, all_expSolGPU, commSize * D);
-    PRINT_ULL_ARRAY(file, all_genChildGPU, commSize * D);
-    PRINT_ULL_ARRAY(file, all_nbStealsGPU, commSize * D);
-    PRINT_ULL_ARRAY(file, all_nbSStealsGPU, commSize * D);
-    PRINT_ULL_ARRAY(file, all_nbTerminationGPU, commSize * D);
+    PRINT_ULL_ARRAY(file, all_expTreeGPU, commSize * NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, all_expSolGPU, commSize * NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, all_genChildGPU, commSize * NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, all_nbStealsGPU, commSize * NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, all_nbSStealsGPU, commSize * NB_THREADS_MAX);
+    PRINT_ULL_ARRAY(file, all_nbTerminationGPU, commSize * NB_THREADS_MAX);
     PRINT_ULL_ARRAY(file, nbSDistLoadBal, commSize);
 
-    PRINT_DOUBLE_ARRAY(file, all_timeGpuCpy, commSize * D);
-    PRINT_DOUBLE_ARRAY(file, all_timeGpuMalloc, commSize * D);
-    PRINT_DOUBLE_ARRAY(file, all_timeGpuKer, commSize * D);
-    PRINT_DOUBLE_ARRAY(file, all_timeGenChild, commSize * D);
-    PRINT_DOUBLE_ARRAY(file, all_timePoolOps, commSize * D);
-    PRINT_DOUBLE_ARRAY(file, all_timeGpuIdle, commSize * D);
-    PRINT_DOUBLE_ARRAY(file, all_timeTermination, commSize * D);
+    PRINT_DOUBLE_ARRAY(file, all_timeGpuCpy, commSize * NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, all_timeGpuMalloc, commSize * NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, all_timeGpuKer, commSize * NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, all_timeGenChild, commSize * NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, all_timePoolOps, commSize * NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, all_timeGpuIdle, commSize * NB_THREADS_MAX);
+    PRINT_DOUBLE_ARRAY(file, all_timeTermination, commSize * NB_THREADS_MAX);
     PRINT_DOUBLE_ARRAY(file, timeLoadBal, commSize);
 
     // Finalize row

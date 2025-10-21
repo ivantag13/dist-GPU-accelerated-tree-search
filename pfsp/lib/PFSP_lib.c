@@ -140,7 +140,7 @@ void print_settings(const int inst, const int machines, const int jobs, const in
   else if (version == 2)
     printf("Multi-core Multi-GPU C+OpenMP+CUDA (%d GPU(s) / %d CPU(s) - [%d]WS)\n\n", D, C, ws);
   else
-    printf("Distributed Multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x %d GPUs - LB[%d])\n\n", commSize, D, LB);
+    printf("Distributed Multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x ( %d GPU(s) / %d CPU(s) ) - LB[%d])\n\n", commSize, D, C, LB);
 
   printf("Resolution of PFSP Taillard's instance: ta%d (m = %d, n = %d)\n", inst, machines, jobs);
   if (ub == 0)
@@ -181,7 +181,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   *D = 0;
   *C = 0;
   *ws = 1;
-  *L = 0;
+  *L = 1;
   *perc = 0.5;
   /*
     NOTE: Only forward branching is considered because other strategies increase a
@@ -207,7 +207,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   int opt, value;
   int option_index = 0;
 
-  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:C:w:L:p:", long_options, &option_index)) != -1)
+  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:T:D:C:w:L:p:", long_options, &option_index)) != -1)
   {
     value = atoi(optarg);
 
@@ -295,7 +295,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       break;
 
     case 'L':
-      if (value < 0 || value > 2)
+      if (value < 0 || value > 1)
       {
         fprintf(stderr, "Error: unsupported distributed dynamic load balancing option\n");
         exit(EXIT_FAILURE);
