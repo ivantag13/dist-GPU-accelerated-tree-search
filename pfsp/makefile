@@ -29,7 +29,7 @@ else ifeq ($(SYSTEM), lumi)
 endif
 
 C_COMMON_OPTS    := -O3 -Wall -g -Wno-uninitialized
-CUDA_COMMON_OPTS := -O3 -arch=sm_86 # TODO: adapt SM automatically, if possible
+CUDA_COMMON_OPTS := -O3 -arch=sm_80 # TODO: adapt SM automatically, if possible
 HIP_COMMON_OPTS  := $(C_COMMON_OPTS) --offload-arch=$(AMD_GPU_ARCH) -Wno-unused-result
 
 LIBPATH := lib
@@ -46,7 +46,7 @@ LIBCOMMON := ../common
 # HIP_OBJECTS      := $(HIP_SOURCES:hip.cu=hip.o)
 
 # Executable names
-EXECUTABLES := pfsp_c.out pfsp_omp_c.out pfsp_gpu_cuda.out pfsp_multigpu_cuda.out pfsp_omp_multigpu_cuda.out pfsp_dist_multigpu_cuda.out pfsp_omp_dist_multigpu_cuda.out pfsp_gpu_hip.out pfsp_omp_gpu_cuda.out pfsp_multigpu_hip.out pfsp_omp_multigpu_hip.out pfsp_dist_multigpu_hip.out pfsp_omp_dist_multigpu_hip.out
+EXECUTABLES := pfsp_c.out pfsp_omp_c.out pfsp_gpu_cuda.out pfsp_multigpu_cuda.out pfsp_dist_multigpu_cuda.out pfsp_gpu_hip.out pfsp_multigpu_hip.out pfsp_dist_multigpu_hip.out
 
 # Build codes
 all: $(EXECUTABLES)
@@ -86,9 +86,6 @@ pfsp_multigpu_cuda.out: pfsp_multigpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/
 pfsp_dist_multigpu_cuda.out: pfsp_dist_multigpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib.o $(LIBPATH)/PFSP_statistic.o
 	$(MPI_COMPILER) $(C_COMMON_OPTS) -fopenmp $^ -o $@ -lm -lcudart $(CUDA_INCLUDE) $(CUDA_LIB)
 
-pfsp_omp_dist_multigpu_cuda.out: pfsp_omp_dist_multigpu_cuda.c $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib.o $(LIBPATH)/PFSP_statistic.o
-	$(MPI_COMPILER) $(C_COMMON_OPTS) -fopenmp $^ -o $@ -lm -lcudart $(CUDA_INCLUDE) $(CUDA_LIB)
-
 $(LIBPATH)/PFSP_gpu_lib_hip.o: $(LIBPATH)/PFSP_gpu_lib.cu
 	hipify-perl $< > $<.hip
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) -c $<.hip -o $@
@@ -121,13 +118,6 @@ pfsp_dist_multigpu_hip.o: pfsp_dist_multigpu_cuda.c
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) -fopenmp -c $<.hip -o $@
 
 pfsp_dist_multigpu_hip.out: pfsp_dist_multigpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib_hip.o $(LIBPATH)/PFSP_statistic.o
-	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) $(MPI_FLAGS) -fopenmp $^ -o $@
-
-pfsp_omp_dist_multigpu_hip.o: pfsp_omp_dist_multigpu_cuda.c
-	hipify-perl $< > $<.hip
-	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) -fopenmp -c $<.hip -o $@
-
-pfsp_omp_dist_multigpu_hip.out: pfsp_omp_dist_multigpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib_hip.o $(LIBPATH)/PFSP_statistic.o
 	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) $(MPI_FLAGS) -fopenmp $^ -o $@
 
 # Utilities
