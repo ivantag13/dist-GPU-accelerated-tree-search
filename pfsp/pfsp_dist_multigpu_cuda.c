@@ -151,7 +151,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   Step 1: We perform a partial breadth-first search on CPU in order to create
   a sufficiently large amount of work for GPU computation.
   */
- 
+
   int NB_THREADS_MAX = D + C;
   while (pool.size < commSize * NB_THREADS_MAX * m)
   {
@@ -248,8 +248,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       cpulb = 0;
     // Debug: printf("Debug: Proc[%d] Thread[%d] Mark[%d]\n", MPIRank, cpuID, mark); // TODO: Check like JP was doing it
 
-    if (D > 0 && cpuID >= C)
-      cudaSetDevice(cpuID - C);
+    if (D > 0 && cpuID < D && cpuID != NB_THREADS_COMPUTE)
+      cudaSetDevice(cpuID);
 
     SinglePool_atom *pool_loc;
     if (cpuID != NB_THREADS_COMPUTE)
@@ -282,7 +282,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     // cudaMalloc((void **)&parents_d, M * sizeof(Node));
-    if (D > 0 && cpuID >= C)
+    if (D > 0 && cpuID < D)
       cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
     int *sumOffSets = (int *)malloc(M * sizeof(int));
@@ -344,7 +344,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           int sendNodesSize = 0;
           if (needy_count > 0 && needy_count < commSize && !needs_work) //  Only proceed if some (but not all) processes need work
           {
-            int victims[D]; // TODO: in case of distributed multi-core (no GPUs) have to offer CPU PU's as a victim
+            int victims[D];
             permute(victims, D);
             for (int j = 0; j < D; j++)
             {
@@ -352,6 +352,24 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               sendNodesSize = popBackBulk(&multiPool[gpuVictim], m, distRatio * M, sendNodes, 2);
               if (sendNodesSize > 0)
                 break;
+            }
+          }
+
+          // Step 2 (optional for pure multi-core version): Determine how much to give to steal request (if this process has work)
+          if (D == 0)
+          {
+            int sendNodesSize = 0;
+            if (needy_count > 0 && needy_count < commSize && !needs_work) //  Only proceed if some (but not all) processes need work
+            {
+              int victims[C];
+              permute(victims, C);
+              for (int j = 0; j < C; j++)
+              {
+                int cpuVictim = victims[j] + D;
+                sendNodesSize = popBackBulk(&multiPool[cpuVictim], m, distRatio * T, sendNodes, 2);
+                if (sendNodesSize > 0)
+                  break;
+              }
             }
           }
 
@@ -380,17 +398,17 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
             // TODO: improve insertion of stolen nodes into multiple local pools
 
-            int nodesPerPool = insNodesSize / D;
-            int remainderPool = insNodesSize % D;
-            for (int k = 0; k < D - 1; k++)
-            {
-              pushBackBulk(&multiPool[k], insNodes + (nodesPerPool * k), nodesPerPool);
-              // atomic_store(&eachTaskState[k], BUSY);
-            }
-            pushBackBulk(&multiPool[D - 1], insNodes + (nodesPerPool * (D - 1)), nodesPerPool + remainderPool);
-            // atomic_store(&eachTaskState[nbPool - 1], BUSY);
+            // int nodesPerPool = insNodesSize / D;
+            // int remainderPool = insNodesSize % D;
+            // for (int k = 0; k < D - 1; k++)
+            // {
+            //   pushBackBulk(&multiPool[k], insNodes + (nodesPerPool * k), nodesPerPool);
+            //   // atomic_store(&eachTaskState[k], BUSY);
+            // }
+            // pushBackBulk(&multiPool[D - 1], insNodes + (nodesPerPool * (D - 1)), nodesPerPool + remainderPool);
+            // // atomic_store(&eachTaskState[nbPool - 1], BUSY);
 
-            // pushBackBulk(&multiPool[0], insNodes, insNodesSize);
+            pushBackBulk(&multiPool[0], insNodes, insNodesSize);
             for (int l = 0; l < NB_THREADS_COMPUTE; l++)
               atomic_store(&eachTaskState[l], BUSY);
             local_need = 0;
@@ -408,9 +426,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
         int poolSize;
         startPoolOps = omp_get_wtime();
-        if (C > 0 && cpuID < C)
+        if (C > 0 && cpuID >= D)
           poolSize = popBackBulk(pool_loc, m, T, parents, 1);
-        else if (D > 0 && cpuID >= C)
+        else if (D > 0 && cpuID < D)
           poolSize = popBackBulk(pool_loc, m, M, parents, 1);
         poolSizes_all[cpuID] = poolSize;
         endPoolOps = omp_get_wtime();
@@ -418,7 +436,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
         if (poolSize > 0)
         {
-          if (C > 0 && cpuID < C)
+          if (C > 0 && cpuID >= D)
           {
             // CPU computation
             pushBackBulk(&parentsPool, parents, poolSize);
@@ -446,7 +464,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               pushBackBulk(pool_loc, children, childrenSize);
             }
           }
-          else if (D > 0 && cpuID >= C)
+          else if (D > 0 && cpuID < D)
           {
             // GPU computation
             if (taskState == IDLE)
@@ -537,9 +555,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                   {
                     // int stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2);
                     int stolenNodesSize;
-                    if (D > 0 && cpuID >= C)
+                    if (D > 0 && cpuID < D)
                       stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
-                    else if (C > 0 && cpuID < C)
+                    else if (C > 0 && cpuID >= D)
                       stolenNodesSize = popBackBulkFree(victim, m, 4 * T, stolenNodes, 2); // ratio is 2
 
                     if (stolenNodesSize == 0)
