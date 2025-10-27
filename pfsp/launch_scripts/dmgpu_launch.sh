@@ -9,9 +9,11 @@
 # === Default values ===
 MIN_SIZE=25
 MAX_SIZE=50000
-DEVICES=1
+CPU_SIZE=5000
+DEVICES=0
+CPUS=0
 WORK_STEALING=1
-LOAD_BALANCING=0
+LOAD_BALANCING=1
 REPETITIONS=1
 JOBS=0
 MACHINES=0
@@ -19,11 +21,13 @@ LEVEL=1
 NODES=1
 
 # === Parse command-line options ===
-while getopts ":m:M:D:w:L:r:j:g:l:n:" opt; do
+while getopts ":m:M:T:D:C:w:L:r:j:g:l:n:" opt; do
   case $opt in
     m) MIN_SIZE=$OPTARG ;;
     M) MAX_SIZE=$OPTARG ;;
+    T) CPU_SIZE=$OPTARG ;;
     D) DEVICES=$OPTARG ;;
+    C) CPUS=$OPTARG ;;
     w) WORK_STEALING=$OPTARG ;;
     L) LOAD_BALANCING=$OPTARG ;;
     r) REPETITIONS=$OPTARG ;;
@@ -31,8 +35,8 @@ while getopts ":m:M:D:w:L:r:j:g:l:n:" opt; do
     g) MACHINES=$OPTARG ;;
     l) LEVEL=$OPTARG ;;
     n) NODES=$OPTARG ;;
-    \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
-    :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
+    \?) echo "Invalid option -$OPTARG" >&3; exit 1 ;;
+    :) echo "Option -$OPTARG requires an argument." >&3; exit 1 ;;
   esac
 done
 
@@ -88,7 +92,7 @@ echo "------------------------------------------"
 for k in $INSTANCES; do
   for ((i=1; i<=REPETITIONS; i++)); do
     echo "Running instance $k (rep $i)"
-    srun --nodes=$NODES --gpus-per-node=8 --cpus-per-task=32 --ntasks-per-node=1 ./../pfsp_dist_multigpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE" -D "$DEVICES" -w "$WORK_STEALING" -L "$LOAD_BALANCING"
+    srun --nodes=$NODES --gpus-per-node=8 --cpus-per-task=32 --ntasks-per-node=1 ./../pfsp_dist_multigpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE" -T "$CPU_SIZE" -D "$DEVICES" -C "$CPUS" -w "$WORK_STEALING" -L "$LOAD_BALANCING"
   done
 done
 
