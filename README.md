@@ -115,7 +115,7 @@ srun --nodes=5 --gpus=7 --cpus-per-task=32 --ntasks-per-node=1 ./pfsp_dist_multi
 ## Publications
 
 1. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab, and G. Danoy. A Portable Branch-and-Bound Algorithm for Cross-Architecture Multi-GPU Systems. In 2025 HeteroPar Workshop3 from the Euro-Par4 conference, Dresden, Germany, August 26, 2025. (Production phase)
-2. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab and G. Danoy, "Performance and Portability in Multi-GPU Branch-and-Bound: Chapel Versus CUDA and HIP for Tree-Based Optimization," 2025 IEEE International Parallel and Distributed Processing Symposium Workshops (IPDPSW), Milano, Italy, 2025, pp. 1293-1295, doi: [10.1109/IPDPSW66978.2025.00217] (https://doi.org/10.1109/IPDPSW66978.2025.00217).
+2. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab and G. Danoy, "Performance and Portability in Multi-GPU Branch-and-Bound: Chapel Versus CUDA and HIP for Tree-Based Optimization," 2025 IEEE International Parallel and Distributed Processing Symposium Workshops (IPDPSW), Milano, Italy, 2025, pp. 1293-1295, doi: [10.1109/IPDPSW66978.2025.00217](https://doi.org/10.1109/IPDPSW66978.2025.00217).
 
 ## Bibliography
 
