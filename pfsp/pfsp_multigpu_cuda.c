@@ -143,8 +143,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     if (lb == 1)
       cpulb = 0;
 
-    if (D > 0 && cpuID >= C)
-      cudaSetDevice(cpuID - C);
+    if (D > 0 && cpuID < D)
+      cudaSetDevice(cpuID);
 
     unsigned long long int tree = 0, sol = 0;
     int nbSteals = 0, nbSSteals = 0;
@@ -183,7 +183,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // Allocating parents vector on CPU and GPU
     // TODO: look single-GPU file remark!
     Node *parents_d;
-    if (D > 0 && cpuID >= C)
+    if (D > 0 && cpuID < D)
       cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
     int *sumOffSets = (int *)malloc(M * sizeof(int));
@@ -211,16 +211,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
       int poolSize; // one variable per each?
       startPoolOps = omp_get_wtime();
-      if (C > 0 && cpuID < C)
+      if (C > 0 && cpuID >= D)
         poolSize = popBackBulk(pool_loc, m, T, parents, 1);
-      else if (D > 0 && cpuID >= C)
+      else if (D > 0 && cpuID < D)
         poolSize = popBackBulk(pool_loc, m, M, parents, 1);
       endPoolOps = omp_get_wtime();
       timePoolOps[cpuID] += endPoolOps - startPoolOps;
 
       if (poolSize > 0)
       {
-        if (C > 0 && cpuID < C)
+        if (C > 0 && cpuID >= D)
         {
           // CPU computation
           pushBackBulk(&parentsPool, parents, poolSize);
@@ -248,7 +248,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             pushBackBulk(pool_loc, children, childrenSize);
           }
         }
-        else if (D > 0 && cpuID >= C)
+        else if (D > 0 && cpuID < D)
         {
           // GPU computation
           if (taskState == IDLE)
@@ -360,9 +360,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                   if (size >= 2 * m)
                   {
                     int stolenNodesSize;
-                    if (D > 0 && cpuID >= C)
+                    if (D > 0 && cpuID < D)
                       stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
-                    else if (C > 0 && cpuID < C)
+                    else if (C > 0 && cpuID >= D)
                       stolenNodesSize = popBackBulkFree(victim, m, 4 * T, stolenNodes, 2); // ratio is 2
 
                     if (stolenNodesSize == 0)
