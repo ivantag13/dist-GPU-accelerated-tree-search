@@ -120,13 +120,14 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     is not enough work.
   */
 
-  unsigned long long int eachExpTree[NB_THREADS_MAX], eachExpSol[NB_THREADS_MAX];
+  // ATTENTION: Remove from comment to help estimate search space during runtime
+  // unsigned long long int eachExpTree[NB_THREADS_MAX], eachExpSol[NB_THREADS_MAX];
   SinglePool_atom multiPool[NB_THREADS_MAX];
   for (int i = 0; i < NB_THREADS_MAX; i++)
   {
     initSinglePool_atom(&multiPool[i]);
-    eachExpTree[i] = 0;
-    eachExpSol[i] = 0;
+    // eachExpTree[i] = 0;
+    // eachExpSol[i] = 0;
   }
   int best_l = *best;
 
@@ -203,7 +204,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     endGpuMalloc = omp_get_wtime();
     timeGpuMalloc[cpuID] = endGpuMalloc - startGpuMalloc;
 
-    int counter = 0;
+    // int counter = 0;
 
     while (1)
     {
@@ -239,8 +240,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               decompose(jobs, cpulb, best, lbound1, lbound2, parent, &tree, &sol, &childrenPool);
             }
           }
-          eachExpTree[cpuID] = tree;
-          eachExpSol[cpuID] = sol;
+          // ATTENTION: Remove from comment to help estimate search space during runtime
+          // eachExpTree[cpuID] = tree;
+          // eachExpSol[cpuID] = sol;
 
           if (childrenPool.size > 0)
           {
@@ -306,10 +308,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           genChildGPU[cpuID] += indexChildren;
           endPoolOps = omp_get_wtime();
           timePoolOps[cpuID] += endPoolOps - startPoolOps;
-          eachExpTree[cpuID] = tree;
-          eachExpSol[cpuID] = sol;
 
-          // Useful counter step to provide info on tree exploration during runtime
+          // ATTENTION: Remove from comment to help estimate search space during runtime
+          // eachExpTree[cpuID] = tree;
+          // eachExpSol[cpuID] = sol;
           // if (counter % 10000 == 0)
           // {
           //   endTime = omp_get_wtime();
@@ -323,7 +325,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           //   printf("Counter[%d] GPU[%d]: Tree[%llu] Sol[%llu]\n Pool: size[%d] capacity[%d] poolSize[%d]\n Timer: Total[%f] cudaMemcpy[%f] cudaMalloc[%f] kernelCall[%f] generateChildren[%f]\n",
           //          counter, cpuID, partialExpTree, partialExpSol, pool_loc->size, pool_loc->capacity, poolSize, t2, timeGpuCpy[cpuID], timeGpuMalloc[cpuID], timeGpuKer[cpuID], timeGenChild[cpuID]);
           // }
-          counter++;
+          // counter++;
         }
       }
       else
