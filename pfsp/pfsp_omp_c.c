@@ -373,26 +373,36 @@ int main(int argc, char *argv[])
 {
     srand(time(NULL));
     int version = 2; // Multi-GPU version is code 2
-    // Parallel PFSP only uses: inst, lb, ub, m, M, D, ws
-    int inst, lb, ub, m, M, D, ws, LB, commSize = 1; // commSize is an artificial variable here
+    // Parallel Multi-core PFSP only uses: inst, lb, ub, m, T, C, ws
+    int inst, lb, ub, m, M, T, D, C, ws, LB, commSize = 1; // commSize is an artificial variable here
     double perc;
-    parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &ws, &LB, &perc);
+    parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &T, &D, &C, &ws, &LB, &perc);
+
+    int nb_proc = omp_get_num_procs();
+    if (C > nb_proc)
+    {
+        printf("Execution Terminated. More processing units requested than the ones available\n");
+        exit(1);
+    }
+    if (C == 0)
+    {
+        printf("No processing units requested. Please set C to at least 1\n");
+        exit(1);
+    }
 
     int jobs = taillard_get_nb_jobs(inst);
     int machines = taillard_get_nb_machines(inst);
 
-    print_settings(inst, machines, jobs, ub, lb, D, ws, commSize, LB, version);
+    print_settings(inst, machines, jobs, ub, lb, D, C, ws, commSize, LB, version);
 
     int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
     unsigned long long int exploredTree = 0, exploredSol = 0;
-    //   unsigned long long int expTreeGPU[D], expSolGPU[D], genChildGPU[D], nbStealsGPU[D], nbSStealsGPU[D], nbTerminationGPU[D];
-    unsigned long long int expTreeCPU[D], expSolCPU[D], genChildCPU[D], nbStealsCPU[D], nbSStealsCPU[D], nbTerminationCPU[D];
+    unsigned long long int expTreeCPU[C], expSolCPU[C], genChildCPU[C], nbStealsCPU[C], nbSStealsCPU[C], nbTerminationCPU[C];
 
     double elapsedTime = 0;
-    // double timeGpuCpy[D], timeGpuMalloc[D], timeGpuKer[D], timeGenChild[D], timePoolOps[D], timeGpuIdle[D], timeTermination[D];
-    double timeGpuCpy[D], timeGpuMalloc[D], timeCpuKer[D], timeGenChild[D], timePoolOps[D], timeCpuIdle[D], timeTermination[D];
+    double timeGpuCpy[C], timeGpuMalloc[C], timeCpuKer[C], timeGenChild[C], timePoolOps[C], timeCpuIdle[C], timeTermination[C];
 
-    for (int i = 0; i < D; i++)
+    for (int i = 0; i < C; i++)
     {
         timeGpuCpy[i] = 0;
         timeGpuMalloc[i] = 0;
@@ -409,13 +419,13 @@ int main(int argc, char *argv[])
         nbTerminationCPU[i] = 0;
     }
 
-    pfsp_search(inst, lb, m, M, D, perc, ws, &optimum, &exploredTree, &exploredSol, &elapsedTime,
+    pfsp_search(inst, lb, m, T, C, perc, ws, &optimum, &exploredTree, &exploredSol, &elapsedTime,
                 expTreeCPU, expSolCPU, genChildCPU, nbStealsCPU, nbSStealsCPU, nbTerminationCPU,
                 timeGpuCpy, timeGpuMalloc, timeCpuKer, timeGenChild, timePoolOps, timeCpuIdle, timeTermination);
 
     print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
-    print_results_file_multi_gpu(inst, lb, D, ws, optimum, m, M, exploredTree, exploredSol, elapsedTime,
+    print_results_file_multi_gpu(inst, lb, D, C, ws, optimum, m, M, T, exploredTree, exploredSol, elapsedTime,
                                  expTreeCPU, expSolCPU, genChildCPU, nbStealsCPU, nbSStealsCPU, nbTerminationCPU,
                                  timeGpuCpy, timeGpuMalloc, timeCpuKer, timeGenChild, timePoolOps, timeCpuIdle, timeTermination);
 
