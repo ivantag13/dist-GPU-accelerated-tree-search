@@ -76,14 +76,14 @@ int main(int argc, char *argv[])
 {
   int version = 0; // Sequential version is code 0
   // Sequential PFSP only uses: inst, lb, ub
-  int inst, lb, ub, m, M, D, ws, LB, commSize = 1; // commSize is an artificial variable here
+  int inst, lb, ub, m, M, T, D, C, ws, LB, commSize = 1; // commSize is an artificial variable here
   double perc;
-  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &D, &ws, &LB, &perc);
+  parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &T, &D, &C, &ws, &LB, &perc);
 
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
 
-  print_settings(inst, machines, jobs, ub, lb, D, ws, commSize, LB, version);
+  print_settings(inst, machines, jobs, ub, lb, D, C, ws, commSize, LB, version);
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
   unsigned long long int exploredTree = 0;
