@@ -10,8 +10,8 @@
 MIN_SIZE=25
 MAX_SIZE=50000
 CPU_SIZE=5000
-DEVICES=0
-CPUS=0
+DEVICES=1
+CPUS=1
 WORK_STEALING=1
 LOAD_BALANCING=1
 REPETITIONS=1
@@ -35,8 +35,8 @@ while getopts ":m:M:T:D:C:w:L:r:j:g:l:n:" opt; do
     g) MACHINES=$OPTARG ;;
     l) LEVEL=$OPTARG ;;
     n) NODES=$OPTARG ;;
-    \?) echo "Invalid option -$OPTARG" >&3; exit 1 ;;
-    :) echo "Option -$OPTARG requires an argument." >&3; exit 1 ;;
+    \?) echo "Invalid option -$OPTARG" >&2; exit 1 ;;
+    :) echo "Option -$OPTARG requires an argument." >&2; exit 1 ;;
   esac
 done
 
