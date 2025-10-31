@@ -87,6 +87,38 @@ int globalTermination(int commSize, int D, SinglePool_atom *multiPool, int *pool
     return 0;
 }
 
+// TODO: Experimental Termination condition
+// int globalTermination(int commSize, _Atomic bool *allTasksIdleFlag, _Atomic bool *eachTaskTermination, int NB_THREADS_COMPUTE, int MPIRank)
+// {
+//   int local_flag = 0;
+//   int global_flag = 0;
+//   int sum = 0;
+
+//   if (atomic_load(allTasksIdleFlag))
+//   {
+//     while (sum < NB_THREADS_COMPUTE)
+//     {
+//       sum = 0;
+//       for (int i = 0; i < NB_THREADS_COMPUTE; i++)
+//       {
+//         if (atomic_load(&eachTaskTermination[i]))
+//           sum++;
+//       }
+//     }
+//     local_flag = 1;
+//   }
+//   else
+//     local_flag = 0;
+
+//   MPI_Allreduce(&local_flag, &global_flag, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+//   printf("Proc[%d] global_flag = %d\n", MPIRank, global_flag);
+
+//   if (global_flag == commSize)
+//     return 1;
+//   else
+//     return 0;
+// }
+
 int gatherRecvDataV(int commSize, int sendSize, Node *sendData, Node *recvData, MPI_Datatype myData)
 {
   int sendCounts[commSize];
@@ -117,6 +149,17 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   // New MPI data type corresponding to Node
   MPI_Datatype myNode;
   create_mpi_node_type(&myNode);
+
+  // TODO: if no multi-core is activated (C==0) one need to fix how the mapping should be fixed in case of inter-node work stealing
+  int deviceCount = 0;
+  cudaGetDeviceCount(&deviceCount);
+  int nb_proc;
+  if (C == 1)
+    nb_proc = omp_get_num_procs();
+  else if (C == 0)
+    nb_proc = deviceCount;
+  int NB_THREADS_GPU = (nb_proc / deviceCount);
+  int NB_THREADS_MAX = D * NB_THREADS_GPU;
 
   // printf("Proc[%d] Num_procs[%d] MAX_GPU[%d] NB_THREADS_GPU[%d] NB_THREADS_MAX[%d]\n", MPIRank, nb_procs, MAX_GPU, NB_THREADS_GPU, NB_THREADS_MAX);
 
@@ -152,7 +195,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   a sufficiently large amount of work for GPU computation.
   */
 
-  int NB_THREADS_MAX = D + C;
   while (pool.size < commSize * NB_THREADS_MAX * m)
   {
     int hasWork = 0;
@@ -218,13 +260,18 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   _Atomic bool bestLock = false;
   _Atomic bool allTasksIdleFlag = false;
   _Atomic bool eachTaskState[NB_THREADS_COMPUTE]; // one task per GPU
+  _Atomic bool eachTaskTermination[NB_THREADS_COMPUTE];
   for (int i = 0; i < NB_THREADS_COMPUTE; i++)
+  {
     atomic_store(&eachTaskState[i], BUSY);
-
+    atomic_store(&eachTaskTermination[i], BUSY);
+  }
   int global_termination_flag = 0, local_need = 0;
   int poolSizes_all[NB_THREADS_COMPUTE];
 
   startTime = omp_get_wtime();
+
+  // TODO: This needs to be fixed when not multi-core activated
   int nbThreads = (L != 0) ? NB_THREADS_MAX : NB_THREADS_COMPUTE;
 
   // Allocating vectors for distributed communications
@@ -248,8 +295,10 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       cpulb = 0;
     // Debug: printf("Debug: Proc[%d] Thread[%d] Mark[%d]\n", MPIRank, cpuID, mark); // TODO: Check like JP was doing it
 
-    if (D > 0 && cpuID < D && cpuID != NB_THREADS_COMPUTE)
-      cudaSetDevice(cpuID);
+    // if (D > 0 && cpuID < D && cpuID != NB_THREADS_COMPUTE)
+    //   cudaSetDevice(cpuID);
+    if (cpuID % NB_THREADS_GPU == 0)
+      cudaSetDevice(cpuID / NB_THREADS_GPU);
 
     SinglePool_atom *pool_loc;
     if (cpuID != NB_THREADS_COMPUTE)
@@ -282,7 +331,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     Node *children = (Node *)malloc(jobs * M * sizeof(Node));
     Node *parents_d;
     // cudaMalloc((void **)&parents_d, M * sizeof(Node));
-    if (D > 0 && cpuID < D)
+    if (cpuID % NB_THREADS_GPU == 0)
       cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
     int *sumOffSets = (int *)malloc(M * sizeof(int));
@@ -325,6 +374,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
           checkBest(&best_all, best, &bestLock);
 
         global_termination_flag = globalTermination(commSize, NB_THREADS_COMPUTE, multiPool, poolSizes_all, m);
+        // global_termination_flag = globalTermination(commSize, &allTasksIdleFlag, eachTaskTermination, NB_THREADS_COMPUTE, MPIRank);
 
         // No global termination, then work stealing
         if (!global_termination_flag)
@@ -348,7 +398,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             permute(victims, D);
             for (int j = 0; j < D; j++)
             {
-              int gpuVictim = victims[j];
+              int gpuVictim = victims[j] * NB_THREADS_GPU;
               sendNodesSize = popBackBulk(&multiPool[gpuVictim], m, distRatio * M, sendNodes, 2);
               if (sendNodesSize > 0)
                 break;
@@ -398,19 +448,18 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
             // TODO: improve insertion of stolen nodes into multiple local pools
 
-            // int nodesPerPool = insNodesSize / D;
-            // int remainderPool = insNodesSize % D;
-            // for (int k = 0; k < D - 1; k++)
-            // {
-            //   pushBackBulk(&multiPool[k], insNodes + (nodesPerPool * k), nodesPerPool);
-            //   // atomic_store(&eachTaskState[k], BUSY);
-            // }
-            // pushBackBulk(&multiPool[D - 1], insNodes + (nodesPerPool * (D - 1)), nodesPerPool + remainderPool);
-            // // atomic_store(&eachTaskState[nbPool - 1], BUSY);
+            int nodesPerPool = insNodesSize / D;
+            int remainderPool = insNodesSize % D;
+            for (int k = 0; k < D - 1; k++)
+            {
+              pushBackBulk(&multiPool[k * NB_THREADS_GPU], insNodes + (nodesPerPool * k), nodesPerPool);
+              atomic_store(&eachTaskState[k * NB_THREADS_GPU], BUSY);
+            }
+            pushBackBulk(&multiPool[(D - 1) * NB_THREADS_GPU], insNodes + (nodesPerPool * (D - 1)), nodesPerPool + remainderPool);
+            atomic_store(&eachTaskState[(D - 1) * NB_THREADS_GPU], BUSY);
 
-            pushBackBulk(&multiPool[0], insNodes, insNodesSize);
-            for (int l = 0; l < NB_THREADS_COMPUTE; l++)
-              atomic_store(&eachTaskState[l], BUSY);
+            // pushBackBulk(&multiPool[0], insNodes, insNodesSize);
+            // atomic_store(&eachTaskState[0], BUSY);
             local_need = 0;
             atomic_store(&allTasksIdleFlag, BUSY);
           }
@@ -426,9 +475,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
         int poolSize;
         startPoolOps = omp_get_wtime();
-        if (C > 0 && cpuID >= D)
+        if (cpuID % NB_THREADS_GPU != 0)
           poolSize = popBackBulk(pool_loc, m, T, parents, 1);
-        else if (D > 0 && cpuID < D)
+        else
           poolSize = popBackBulk(pool_loc, m, M, parents, 1);
         poolSizes_all[cpuID] = poolSize;
         endPoolOps = omp_get_wtime();
@@ -436,7 +485,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
         if (poolSize > 0)
         {
-          if (C > 0 && cpuID >= D)
+          if (cpuID % NB_THREADS_GPU != 0)
           {
             // CPU computation
             pushBackBulk(&parentsPool, parents, poolSize);
@@ -464,7 +513,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               pushBackBulk(pool_loc, children, childrenSize);
             }
           }
-          else if (D > 0 && cpuID < D)
+          else
           {
             // GPU computation
             if (taskState == IDLE)
@@ -555,9 +604,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                   {
                     // int stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2);
                     int stolenNodesSize;
-                    if (D > 0 && cpuID < D)
+                    if (cpuID % NB_THREADS_GPU == 0)
                       stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
-                    else if (C > 0 && cpuID >= D)
+                    else
                       stolenNodesSize = popBackBulkFree(victim, m, 4 * T, stolenNodes, 2); // ratio is 2
 
                     if (stolenNodesSize == 0)
@@ -605,6 +654,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
               if (L == 1)
               {
                 // Set request for work while checking global termination
+                atomic_store(&eachTaskTermination[cpuID], IDLE);
                 local_need = 1;
                 // atomic_store(&(pool_loc->lock), false);
                 double cpuIdleStart = omp_get_wtime();
@@ -624,6 +674,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                     break;
                   }
                 }
+                atomic_store(&eachTaskTermination[cpuID], BUSY);
                 // continue;
               }
               else
@@ -637,6 +688,52 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             timeTermination[cpuID] += endTermination - startTermination;
             continue;
           }
+          // // TODO: Second experimental termination condition
+          // if (localSteal == false && globalSteal == false)
+          //         {
+          //           // Intra-node termination detection
+          //           if (taskState == BUSY)
+          //           {
+          //             taskState = IDLE;
+          //             atomic_store(&eachTaskState[gpuID], IDLE);
+          //           }
+          //           if (allIdle(eachTaskState, D, &allTasksIdleFlag))
+          //           {
+          //             // Inter-node termination detection
+          //             if (locState == BUSY)
+          //             {
+          //               locState = IDLE;
+          //               // All OpenMP threads access and agree on the value of the next variable at this stage
+          //               atomic_store(&eachLocaleState, IDLE);
+          //             }
+
+          // // A random OpenMP thread checks the global termination condition in every process
+          // #pragma omp single
+          //           {
+          //             bool *allLocaleStateTemp = (bool *)malloc(commSize * sizeof(bool));
+          //             _Atomic bool *allLocaleState = (_Atomic bool *)malloc(commSize * sizeof(_Atomic bool));
+          //             bool eachLocaleStateTemp = atomic_load(&eachLocaleState);
+
+          //             // Gather boolean states from all processes to all processes
+          //             MPI_Allgather(&eachLocaleStateTemp, 1, MPI_C_BOOL, allLocaleStateTemp, 1, MPI_C_BOOL, MPI_COMM_WORLD);
+          //             for (int i = 0; i < commSize; i++)
+          //               atomic_store(&allLocaleState[i], allLocaleStateTemp[i]);
+
+          //             // Check if eachLocalState of every process agrees for termination
+          //             if (allIdle(allLocaleState, commSize, &allLocalesIdleFlag))
+          //               atomic_store(&globalTerminationFlag, true);
+
+          //             free(allLocaleStateTemp);
+          //             free(allLocaleState);
+          //           }
+          //           if (atomic_load(&globalTerminationFlag))
+          //           {
+          //             printf("From process %d thread %d nGSSteal = %d\n", MPIRank, omp_get_thread_num(), nGSSteal);
+          //             break;
+          //           }
+          //         }
+          //         continue;
+          //       }
           else
           {
             continue;
@@ -688,6 +785,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       }
     }
   } // End of parallel region OpenMP
+
+  printf("Proc[%d] Checked Global Termination Condition\n", MPIRank);
 
   free(sendNodes);
   free(recvNodes);
@@ -827,17 +926,25 @@ int main(int argc, char *argv[])
   double perc;
   parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &T, &D, &C, &ws, &LB, &perc);
 
-  int nb_proc = omp_get_num_procs();
-  int NB_THREADS_MAX = D + C;
-  if (NB_THREADS_MAX > nb_proc)
+  if (C < 0 || C > 1)
   {
-    printf("Execution Terminated. More processing units requested than the ones available\n");
+    printf("C is set to %d. Invalid option for this version.\nChoose 0 to unable and 1 to enable multi-core. Mapping automatically done.\n", C);
     exit(1);
   }
 
-  if (NB_THREADS_MAX == 0)
+  int deviceCount = 0;
+  cudaGetDeviceCount(&deviceCount);
+  int nb_proc;
+  if (C == 1) // Activate Multi-core
+    nb_proc = omp_get_num_procs();
+  else if (C == 0) // Deactivate Multi-core
+    nb_proc = deviceCount;
+  // int MAX_GPU = 8;
+  int NB_THREADS_GPU = (nb_proc / deviceCount);
+  int NB_THREADS_MAX = D * NB_THREADS_GPU;
+  if (D > deviceCount)
   {
-    printf("No processing units requested. Please set C or D to 1\n");
+    printf("Execution Terminated. More GPU devices requested than the ones available\n");
     exit(1);
   }
 
@@ -883,6 +990,8 @@ int main(int argc, char *argv[])
   if (MPIRank == 0)
   {
     print_results(optimum, exploredTree, exploredSol, elapsedTime);
+
+    C = NB_THREADS_MAX - D; // Only CPU Processing Units. Change for statistical evaluation.
     print_results_file_dist_multi_gpu(inst, lb, D, C, LB, commSize, optimum, m, M, T, exploredTree, exploredSol, elapsedTime,
                                       all_expTreeGPU, all_expSolGPU, all_genChildGPU, all_nbStealsGPU, all_nbSStealsGPU, all_nbTerminationGPU, nbSDistLoadBal,
                                       all_timeGpuCpy, all_timeGpuMalloc, all_timeGpuKer, all_timeGenChild, all_timePoolOps, all_timeGpuIdle, all_timeTermination, timeLoadBal);
