@@ -58,6 +58,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                  unsigned long long int *nbTerminationGPU, double *timeGpuCpy, double *timeGpuMalloc, double *timeGpuKer, double *timeGenChild,
                  double *timePoolOps, double *timeGpuIdle, double *timeTermination)
 {
+  int deviceCount = 0;
+  cudaGetDeviceCount(&deviceCount);
+  int nb_proc;
+  if (C == 1)
+    nb_proc = omp_get_num_procs();
+  else if (C == 0)
+    nb_proc = deviceCount;
+  int NB_THREADS_GPU = (nb_proc / deviceCount);
+  int NB_THREADS_MAX = D * NB_THREADS_GPU;
+
   // Initializing problem
   int jobs = taillard_get_nb_jobs(inst);
   int machines = taillard_get_nb_machines(inst);
@@ -71,7 +81,6 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
   pushBack(&pool, root);
 
-  int NB_THREADS_MAX = D + C;
   // Boolean variables for termination detection
   _Atomic bool bestLock = false;
   _Atomic bool allTasksIdleFlag = false;
@@ -144,8 +153,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     if (lb == 1)
       cpulb = 0;
 
-    if (D > 0 && cpuID < D)
-      cudaSetDevice(cpuID);
+    // if (D > 0 && cpuID < D)
+    //   cudaSetDevice(cpuID);
+
+    if (cpuID % NB_THREADS_GPU == 0)
+      cudaSetDevice(cpuID / NB_THREADS_GPU);
 
     unsigned long long int tree = 0, sol = 0;
     int nbSteals = 0, nbSSteals = 0;
@@ -184,7 +196,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     // Allocating parents vector on CPU and GPU
     // TODO: look single-GPU file remark!
     Node *parents_d;
-    if (D > 0 && cpuID < D)
+    if (cpuID % NB_THREADS_GPU == 0)
       cudaMalloc((void **)&parents_d, M * sizeof(Node));
 
     int *sumOffSets = (int *)malloc(M * sizeof(int));
@@ -212,16 +224,16 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
       int poolSize; // one variable per each?
       startPoolOps = omp_get_wtime();
-      if (C > 0 && cpuID >= D)
+      if (cpuID % NB_THREADS_GPU != 0)
         poolSize = popBackBulk(pool_loc, m, T, parents, 1);
-      else if (D > 0 && cpuID < D)
+      else
         poolSize = popBackBulk(pool_loc, m, M, parents, 1);
       endPoolOps = omp_get_wtime();
       timePoolOps[cpuID] += endPoolOps - startPoolOps;
 
       if (poolSize > 0)
       {
-        if (C > 0 && cpuID >= D)
+        if (cpuID % NB_THREADS_GPU != 0)
         {
           // CPU computation
           pushBackBulk(&parentsPool, parents, poolSize);
@@ -250,7 +262,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
             pushBackBulk(pool_loc, children, childrenSize);
           }
         }
-        else if (D > 0 && cpuID < D)
+        else
         {
           // GPU computation
           if (taskState == IDLE)
@@ -362,9 +374,9 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
                   if (size >= 2 * m)
                   {
                     int stolenNodesSize;
-                    if (D > 0 && cpuID < D)
+                    if (cpuID % NB_THREADS_GPU == 0)
                       stolenNodesSize = popBackBulkFree(victim, m, 5 * M, stolenNodes, 2); // ratio is 2
-                    else if (C > 0 && cpuID >= D)
+                    else
                       stolenNodesSize = popBackBulkFree(victim, m, 4 * T, stolenNodes, 2); // ratio is 2
 
                     if (stolenNodesSize == 0)
@@ -465,7 +477,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   endTime = omp_get_wtime();
   double t2 = endTime - startTime;
 
-  printf("\nSearch on Parallel CPU completed\n");
+  printf("\nSearch on Parallel GPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t2);
@@ -492,7 +504,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   endTime = omp_get_wtime();
   double t3 = endTime - startTime;
   *elapsedTime = t1 + t2 + t3;
-  printf("\nSearch on CPU completed\n");
+  printf("\nFinal on CPU completed\n");
   printf("Size of the explored tree: %llu\n", *exploredTree);
   printf("Number of explored solutions: %llu\n", *exploredSol);
   printf("Elapsed time: %f [s]\n", t3);
@@ -510,17 +522,25 @@ int main(int argc, char *argv[])
 
   parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &T, &D, &C, &ws, &LB, &perc);
 
-  int nb_proc = omp_get_num_procs();
-  int NB_THREADS_MAX = D + C;
-  if (NB_THREADS_MAX > nb_proc)
+  if (C < 0 || C > 1)
   {
-    printf("Execution Terminated. More processing units requested than the ones available\n");
+    printf("C is set to %d. Invalid option for this version.\nChoose 0 to unable and 1 to enable multi-core. Mapping automatically done.\n", C);
     exit(1);
   }
 
-  if (NB_THREADS_MAX == 0)
+  int deviceCount = 0;
+  cudaGetDeviceCount(&deviceCount);
+  int nb_proc;
+  if (C == 1) // Activate Multi-core
+    nb_proc = omp_get_num_procs();
+  else if (C == 0) // Deactivate Multi-core
+    nb_proc = deviceCount;
+  // int MAX_GPU = 8;
+  int NB_THREADS_GPU = (nb_proc / deviceCount);
+  int NB_THREADS_MAX = D * NB_THREADS_GPU;
+  if (D > deviceCount)
   {
-    printf("No processing units requested. Please set C or D to 1\n");
+    printf("Execution Terminated. More GPU devices requested than the ones available\n");
     exit(1);
   }
 
@@ -561,6 +581,7 @@ int main(int argc, char *argv[])
 
   print_results(optimum, exploredTree, exploredSol, elapsedTime);
 
+  C = NB_THREADS_MAX - D; // Only CPU Processing Units. Change for statistical evaluation.
   print_results_file_multi_gpu(inst, lb, D, C, ws, optimum, m, M, T, exploredTree, exploredSol, elapsedTime,
                                expTreeCPU, expSolCPU, genChildCPU, nbStealsCPU, nbSStealsCPU, nbTerminationCPU,
                                timeGpuCpy, timeGpuMalloc, timeCpuKer, timeGenChild, timePoolOps, timeCpuIdle, timeTermination);
