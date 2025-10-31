@@ -18,11 +18,13 @@ This process is repeated until the pool is empty.
 
 ## Implementations
 
-The [nqueens](./nqueens/) and [pfsp](./pfsp/) directories contains following implementations:
-- `[nqueens/pfsp]_c.c`: sequential version (C);
-- `[nqueens/pfsp]_gpu_cuda.c`: single-GPU version (C+CUDA);
-- `[nqueens/pfsp]_multigpu_cuda.c`: multi-GPU version (C+OpenMP+CUDA).
-- `pfsp_dist_multigpu_cuda.c`: distributed inter-node multi-GPU version (C+MPI+OpenMP+CUDA).
+The [nqueens](./nqueens/) and [pfsp](./pfsp/) directories contains following implementations written in C language:
+- `[nqueens/pfsp]_c.c`: sequential version;
+- `pfsp_omp_c.c`: multi-core version;
+- `[nqueens/pfsp]_gpu_cuda.c`: single-GPU version (CUDA - `pfsp` is deprecated, check README file in `/pfsp`);
+- `nqueens_multigpu_cuda.c`: multi-GPU version (OpenMP+CUDA).
+- `pfsp_multigpu_cuda.c`: multi-GPU version (OpenMP+CUDA)
+- `pfsp_dist_multigpu_cuda.c`: distributed multi-node multi-GPU version (MPI+OpenMP+CUDA).
 
 In order to compile and execute the CUDA-based code on AMD GPU architectures, we use the `hipify-perl` tool which translates it into portable HIP C++ automatically.
 
@@ -34,13 +36,13 @@ By default, in our makefile the target GPU architectures are set for two cluster
 
 ### Compilation
 
-All the code is compiled using the provided makefile. When doing **`make`** the user can choose between three options. The first one is by adding no additional flags, which is convenient for a local compilation. Or by adding the flag **`SYSTEM`**. For instance:
+All the code is compiled using the provided makefile (hopefully, we will provide soon enough a full support to CMake compilation). When doing **`make`** the user can choose between three options. The first one is by adding no additional flags, which is convenient for a local compilation. Or by adding the flag **`SYSTEM`**. For instance:
 - **`make SYSTEM=g5k`**: set the compilation for the Grid'5000 system (AMD GPU architecture code set to `gfx906`)
   - a bash file is available to load all concerning modules, run on terminal from this project root directory **`source config/g5k-module-load.sh`**. Attention, this file is particularly useful for the `HIP` implementation. If you want to execute the distributed version, you should run this bash file in all the nodes from your reservation for installing the necessary libraries and loading the proper modules. Moreover, do not forget to create the `hostfile` for your execution by doing `uniq $OAR_NODE_FILE > hostfile`
 - **`make SYSTEM=lumi`**: set the compilation for the LUMI system (AMD GPU architecture code set to `gfx90a`)
   - a bash file is available to load all concerning modules, run on terminal from this project root directory **`source config/lumi-module-load.sh`**
 
-The CUDA architecture code is always set to `sm_80`.
+The CUDA architecture code is set to `sm_80` by default.
 
 ### Execution
 
@@ -51,8 +53,8 @@ Common command-line options:
 - **`-M`**: maximum number of elements to offload on a GPU device
   - any positive integer greater than `--m` (`50,000` by default)
 
-- **`-D`**: number of GPU device(s) (only in multi-GPU setting)
-  - any positive integer, typically the number of GPU devices (`1` by default)
+- **`-D`**: number of GPU device(s) (for multi-GPU setting)
+  - any positive integer, typically the number of GPU devices (`1` by default for N-Queens, and `0` for PFSP)
 
 Problem-specific command-line options:
 - N-Queens:
@@ -63,6 +65,13 @@ Problem-specific command-line options:
     - any positive integer (`1` by default)
 
 - PFSP:
+  - **`-T`**: maximum number of elements to treat on a CPU processing unit in a single pop back from its pool
+    - any positive integer greater than `--m` (`5000` by default)
+
+  - **`-C`**: activate additional multi-core processing on top of GPU processing. Mapping and amount of extra processing units is automatically taken care of. This option is yet unstable on the distributed implementation. Please stick to the default setting.
+    - `0`: disable multi-core processing
+    - `1`: enable multi-core processing (default)
+
   - **`-i`**: Taillard's instance to solve
     - any positive integer between `001` and `120` (`014` by default)
 
@@ -71,15 +80,13 @@ Problem-specific command-line options:
     - `1`: enable intra-node work stealing (default)
 
   - **`-L`**: Inter-node Dynamic Load Balancing in `pfsp_dist_multigpu_cuda.c`
-    - `0`: no inter-node load balancing (default)
-    - `1`: enable inter-node work sharing
-    - `2`: enable inter-node work stealing
-
+    - `0`: disable inter-node work stealing
+    - `1`: enable inter-node work stealing (default)
 
   <!-- TODO: give references -->
   - **`-l`**: lower bound function
     - `1`: one-machine bound which can be computed in $\mathcal{O}(mn)$ steps per subproblem (default), a.k.a., `LB1`
-    - `0`: fast implementation of `lb1`, which can be compute in $\mathcal{O}(m)$ steps per subproblem, a.k.a., `LB1_d`
+    - `0`: fast implementation of `lb1`, which can be compute in $\mathcal{O}(m)$ steps per subproblem, a.k.a., `LB1_d` (check issue #4)
     - `2`: two-machine bound which can be computed in $\mathcal{O}(m^2n)$ steps per subproblem, , a.k.a., `LB2`
     <!-- a two-machine bound which relies on the exact resolution of two-machine problems obtained by relaxing capacity constraints on all machines, with the exception of a pair of machines \(M<sub>u</sub>,M<sub>v</sub>\)<sub>1<=u<v<=m</sub>, and taking the maximum over all $\frac{m(m-1)}{2}$ machine-pairs. It can be computed in $\mathcal{O}(m^2n)$ steps per subproblem. -->
 
@@ -93,23 +100,23 @@ Unstable command-line options:
 
 ### Examples
 
-- CUDA multi-GPU launch to solve the `ta029` Taillard instance using 4 GPU devices with `m` equal to 30 and `M` equal to 10000 and no Work Stealing enable:
+- CUDA multi-core multi-GPU launch to solve the `ta029` Taillard instance using `4` GPU devices, `23` CPU processing units, `m` set to 30, `M` set to 10000 and **no** Work Stealing enabled:
 ```
-./pfsp_multigpu_cuda.out -i 17 -D 4 -m 30 -M 10000 -w 0
+./pfsp_multigpu_cuda.out -i 17 -D 4 -C 23 -m 30 -M 10000 -w 0
 ```
-- CUDA distributed multi-GPU launch to solve the `ta021` Taillard instance using 3 MPI processes, 8 GPUs, and LB2 bounding function on Grid'5000:
+- CUDA distributed multi-core multi-GPU launch to solve the `ta021` Taillard instance using `3` compute nodes (MPI processes), where each has `8` GPU devices, `5` CPU processing units, and `LB2` bounding function on Grid'5000 (note that the flag `PE` is the sum of GPU devices and CPU processing units):
 ```
-mpirun --hostfile hostfile --map-by ppr:1:node  --mca pml ucx --mca btl ^openib -np 3 ./pfsp_dist_multigpu_cuda.out -i 21 -D 8 -l 2
+mpirun --hostfile hostfile --map-by ppr:1:node:PE=13  --mca pml ucx --mca btl ^openib -np 3 ./pfsp_dist_multigpu_cuda.out -i 21 -D 8 -l 2
 ```
-- HIP distributed multi-GPU launch to solve the `ta024` Taillard instance using 5 MPI processes, 7 GPUs, and LB2 bounding function on LUMI:
+- HIP distributed multi-core multi-GPU launch to solve the `ta024` Taillard instance using `5` MPI processes, `7` GPU devices, no CPU processing units, and `LB1` bounding function on LUMI (note that `--cpus-per-task=32` is set by default because those are all the processing units available in a CPU socket):
 ```
-srun --nodes=5 --gpus=7 --cpus-per-task=32 --ntasks-per-node=1 ./pfsp_dist_multigpu_hip.out -i 24 -l 2 -D 7
+srun --nodes=5 --gpus=7 --cpus-per-task=32 --ntasks-per-node=1 ./pfsp_dist_multigpu_hip.out -i 24 -l 1 -D 7
 ```
 
 ## Publications
 
-1. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab, and G. Danoy. A Portable Branch-and-Bound Algorithm for Cross-Architecture Multi-GPU Systems. In 2025 HeteroPar Workshop3 from the Euro-Par4 conference, Dresden, Germany, August 26, 2025. (Accepted)
-2. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab, and G. Danoy. Performance and Portability in Multi-GPU Branch-and-Bound: Chapel Versus CUDA and HIP for Tree-Based Optimization. In 2025 IEEE International Parallel and Distributed Processing Symposium2 Workshops (IPDPSW), Milan, Italy, June 03–07, 2025, Proceedings, pages 1291–1293, 2025. (Presented and waiting for publication).
+1. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab, and G. Danoy. A Portable Branch-and-Bound Algorithm for Cross-Architecture Multi-GPU Systems. In 2025 HeteroPar Workshop3 from the Euro-Par4 conference, Dresden, Germany, August 26, 2025. (Production phase)
+2. I. Tagliaferro, G. Helbecque, E. Krishnasamy, N. Melab and G. Danoy, "Performance and Portability in Multi-GPU Branch-and-Bound: Chapel Versus CUDA and HIP for Tree-Based Optimization," 2025 IEEE International Parallel and Distributed Processing Symposium Workshops (IPDPSW), Milano, Italy, 2025, pp. 1293-1295, doi: [10.1109/IPDPSW66978.2025.00217](https://doi.org/10.1109/IPDPSW66978.2025.00217).
 
 ## Bibliography
 

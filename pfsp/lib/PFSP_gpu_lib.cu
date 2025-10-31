@@ -51,12 +51,15 @@ extern "C"
       Node parent = parents_d[parentId];
       int depth = parent.depth;
       int limit1 = parent.limit1;
+      int prmu[MAX_JOBS];
+      for (int i = 0; i < MAX_JOBS; i++)
+        prmu[i] = parent.prmu[i];
       int k = threadId + depth;
       if (parentId != 0)
         k -= sumOffSets_d[parentId - 1];
 
-      swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
-      lb1_bound_gpu(lbound1_d, parent.prmu, limit1 + 1, jobs, &bounds[threadId]);
+      swap_cuda(&prmu[depth], &prmu[k]);
+      lb1_bound_gpu(lbound1_d, prmu, limit1 + 1, jobs, &bounds[threadId]);
       // swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
     }
   }
@@ -77,14 +80,18 @@ extern "C"
 
       // Vector of integers of size MAX_JOBS
       int lb_begin[MAX_JOBS];
+      int limit1 = parent.limit1;
+      int prmu[MAX_JOBS];
+      for (int i = 0; i < MAX_JOBS; i++)
+        prmu[i] = parent.prmu[i];
 
-      lb1_children_bounds_gpu(lbound1_d, parent.prmu, parent.limit1, jobs, lb_begin);
+      lb1_children_bounds_gpu(lbound1_d, prmu, limit1, jobs, lb_begin);
 
       for (int k = 0; k < jobs; k++)
       {
-        if (k >= parent.limit1 + 1)
+        if (k >= limit1 + 1)
         {
-          const int job = parent.prmu[k];
+          const int job = prmu[k];
           bounds[parentId * jobs + k] = lb_begin[job];
         }
       }
@@ -103,12 +110,15 @@ extern "C"
       Node parent = parents_d[parentId];
       int depth = parent.depth;
       int limit1 = parent.limit1;
+      int prmu[MAX_JOBS];
+      for (int i = 0; i < MAX_JOBS; i++)
+        prmu[i] = parent.prmu[i];
       int k = threadId + depth;
       if (parentId != 0)
         k -= sumOffSets_d[parentId - 1];
 
-      swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
-      lb2_bound_gpu(lbound1_d, lbound2_d, parent.prmu, limit1 + 1, jobs, best, &bounds[threadId]);
+      swap_cuda(&prmu[depth], &prmu[k]);
+      lb2_bound_gpu(lbound1_d, lbound2_d, prmu, limit1 + 1, jobs, best, &bounds[threadId]);
       // swap_cuda(&parent.prmu[depth], &parent.prmu[k]);
     }
   }

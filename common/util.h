@@ -19,9 +19,9 @@ extern "C"
     Auxiliary functions
     ******************************************************************************/
 
-    static inline void swap(int *a, int *b)
+    static inline void swap(__int16_t *a, __int16_t *b)
     {
-        int tmp = *b;
+        __int16_t tmp = *b;
         *b = *a;
         *a = tmp;
     }

@@ -5,17 +5,21 @@ Implementation of PFSP Nodes.
 
 // Evaluate and generate children nodes on CPU using LB1 bounding function. Parallel safety is not guaranteed.
 inline void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                   int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
+                          int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
     Node child;
     child.depth = parent.depth + 1;
     child.limit1 = parent.limit1 + 1;
-    memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
+    memcpy(child.prmu, parent.prmu, jobs * sizeof(int16_t));
     swap(&child.prmu[parent.depth], &child.prmu[i]);
+    int limit1 = child.limit1;
+    int prmu[MAX_JOBS];
+    for (int j = 0; j < MAX_JOBS; j++)
+      prmu[j] = child.prmu[j];
 
-    int lowerbound = lb1_bound(lbound1, child.prmu, child.limit1, jobs);
+    int lowerbound = lb1_bound(lbound1, prmu, limit1, jobs);
 
     if (child.depth == jobs)
     { // if child leaf
@@ -39,13 +43,18 @@ inline void decompose_lb1(const int jobs, const lb1_bound_data *const lbound1, c
 
 // Evaluate and generate children nodes on CPU using LB1_d bounding function. Parallel safety is not guaranteed.
 inline void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1, const Node parent,
-                     int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
+                            int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol, SinglePool_atom *pool)
 {
   // This declaration is better for performance, memory is on stack
   int lb_begin[jobs];
   // int *lb_begin = (int *)malloc(jobs * sizeof(int));
 
-  lb1_children_bounds(lbound1, parent.prmu, parent.limit1, jobs, lb_begin);
+  int limit1 = parent.limit1;
+  int prmu[MAX_JOBS];
+  for (int j = 0; j < MAX_JOBS; j++)
+    prmu[j] = parent.prmu[j];
+
+  lb1_children_bounds(lbound1, prmu, limit1, jobs, lb_begin);
 
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
@@ -68,7 +77,7 @@ inline void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1,
       { // if child feasible
         child.depth = parent.depth + 1;
         child.limit1 = parent.limit1 + 1;
-        memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
+        memcpy(child.prmu, parent.prmu, jobs * sizeof(int16_t));
         swap(&child.prmu[parent.depth], &child.prmu[i]);
 
         pushBackFree(pool, child);
@@ -82,18 +91,22 @@ inline void decompose_lb1_d(const int jobs, const lb1_bound_data *const lbound1,
 
 // Evaluate and generate children nodes on CPU using LB2 bounding function. Parallel safety is not guaranteed.
 inline void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, const lb2_bound_data *const lbound2,
-                   const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
-                   SinglePool_atom *pool)
+                          const Node parent, int *best, unsigned long long int *tree_loc, unsigned long long int *num_sol,
+                          SinglePool_atom *pool)
 {
   for (int i = parent.limit1 + 1; i < jobs; i++)
   {
     Node child;
     child.depth = parent.depth + 1;
     child.limit1 = parent.limit1 + 1;
-    memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
+    memcpy(child.prmu, parent.prmu, jobs * sizeof(int16_t));
     swap(&child.prmu[parent.depth], &child.prmu[i]);
+    int limit1 = child.limit1;
+    int prmu[MAX_JOBS];
+    for (int j = 0; j < MAX_JOBS; j++)
+      prmu[j] = child.prmu[j];
 
-    int lowerbound = lb2_bound(lbound1, lbound2, child.prmu, child.limit1, jobs, *best);
+    int lowerbound = lb2_bound(lbound1, lbound2, prmu, limit1, jobs, *best);
 
     if (child.depth == jobs)
     { // if child leaf
@@ -117,7 +130,7 @@ inline void decompose_lb2(const int jobs, const lb1_bound_data *const lbound1, c
 
 // Printing functions
 
-void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, int ws, const int commSize, const int LB, const int version)
+void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, const int C, int ws, const int commSize, const int LB, const int version)
 {
   printf("\n=================================================\n");
   if (version == 0)
@@ -125,9 +138,9 @@ void print_settings(const int inst, const int machines, const int jobs, const in
   else if (version == 1)
     printf("Single-GPU C+CUDA\n\n");
   else if (version == 2)
-    printf("Multi-GPU C+OpenMP+CUDA (%d GPUs - [%d]WS)\n\n", D, ws);
+    printf("Multi-core Multi-GPU C+OpenMP+CUDA (%d GPU(s) - [%d] Multi-core - [%d] Work Stealing)\n\n", D, C, ws);
   else
-    printf("Distributed Multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x %d GPUs - LB[%d])\n\n", commSize, D, LB);
+    printf("Distributed Multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x ( %d GPU(s) - [%d] Multi-core ) - [%d] LB)\n\n", commSize, D, C, LB);
 
   printf("Resolution of PFSP Taillard's instance: ta%d (m = %d, n = %d)\n", inst, machines, jobs);
   if (ub == 0)
@@ -157,16 +170,18 @@ void print_results(const int optimum, const unsigned long long int exploredTree,
 }
 
 // Setting parameters function
-void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, int *ws, int *L, double *perc)
+void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *T, int *D, int *C, int *ws, int *L, double *perc)
 {
   *inst = 14;
   *lb = 1;
   *ub = 1;
   *m = 25;
   *M = 50000;
+  *T = 5000;
   *D = 1;
+  *C = 1;
   *ws = 1;
-  *L = 0;
+  *L = 1;
   *perc = 0.5;
   /*
     NOTE: Only forward branching is considered because other strategies increase a
@@ -180,7 +195,9 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       {"ub", required_argument, NULL, 'u'},
       {"m", required_argument, NULL, 'm'},
       {"M", required_argument, NULL, 'M'},
+      {"T", required_argument, NULL, 'T'},
       {"D", required_argument, NULL, 'D'},
+      {"C", required_argument, NULL, 'C'},
       {"ws", required_argument, NULL, 'w'},
       {"L", required_argument, NULL, 'L'},
       {"perc", required_argument, NULL, 'p'},
@@ -190,7 +207,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   int opt, value;
   int option_index = 0;
 
-  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:D:w:L:p:", long_options, &option_index)) != -1)
+  while ((opt = getopt_long(argc, argv, "i:l:u:m:M:T:D:C:w:L:p:", long_options, &option_index)) != -1)
   {
     value = atoi(optarg);
 
@@ -241,6 +258,15 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       *M = value;
       break;
 
+    case 'T':
+      if (value < *m)
+      {
+        fprintf(stderr, "Error: unsupported maximal pool for CPU multi-core\n");
+        exit(EXIT_FAILURE);
+      }
+      *T = value;
+      break;
+
     case 'D':
       if (value < 0)
       {
@@ -248,6 +274,15 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
         exit(EXIT_FAILURE);
       }
       *D = value;
+      break;
+
+    case 'C':
+      if (value < 0)
+      {
+        fprintf(stderr, "Error: unsupported number of CPU Core(s)\n");
+        exit(EXIT_FAILURE);
+      }
+      *C = value;
       break;
 
     case 'w':
@@ -260,7 +295,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       break;
 
     case 'L':
-      if (value < 0 || value > 2)
+      if (value < 0 || value > 1)
       {
         fprintf(stderr, "Error: unsupported distributed dynamic load balancing option\n");
         exit(EXIT_FAILURE);
@@ -278,7 +313,7 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
       break;
 
     default:
-      fprintf(stderr, "Usage: %s --inst <value> --lb <value> --ub <value> --m <value> --M <value> --D <value> --w <value> --L <value> --perc <value>\n", argv[0]);
+      fprintf(stderr, "Usage: %s --inst <value> --lb <value> --ub <value> --m <value> --M <value> --T <value> --D <value> --C <value> --w <value> --L <value> --perc <value>\n", argv[0]);
       exit(EXIT_FAILURE);
     }
   }

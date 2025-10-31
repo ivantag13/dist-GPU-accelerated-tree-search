@@ -18,7 +18,7 @@ extern "C"
                                        const double timer, double timeGpuCpy, double timeGpuMalloc, double timeGpuKer, double timeGenChild);
 
     void print_results_file_multi_gpu(
-        const int inst, const int lb, const int D, int ws, const int optimum, const int m, const int M,
+        const int inst, const int lb, const int D, const int C, int ws, const int optimum, const int m, const int M, const int T,
         const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
         unsigned long long int *expTreeGPU, unsigned long long int *expSolGPU, unsigned long long int *genChildGPU,
         unsigned long long int *nbStealsGPU, unsigned long long int *nbSStealsGPU, unsigned long long int *nbTerminationGPU,
@@ -26,8 +26,8 @@ extern "C"
         double *timeGpuIdle, double *timeTermination);
 
     void print_results_file_dist_multi_gpu(
-        const int inst, const int lb, const int D, const int w, const int commSize, const int optimum, const int m, const int M,
-        const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
+        const int inst, const int lb, const int D, const int C, const int LB, const int commSize, const int optimum, const int m, const int M,
+        const int T, const unsigned long long int exploredTree, const unsigned long long int exploredSol, const double timer,
         unsigned long long int *all_expTreeGPU, unsigned long long int *all_expSolGPU, unsigned long long int *all_genChildGPU,
         unsigned long long int *all_nbStealsGPU, unsigned long long int *all_nbSStealsGPU, unsigned long long int *all_nbTerminationGPU,
         unsigned long long int *nbSDistLoadBal, double *all_timeGpuCpy, double *all_timeGpuMalloc, double *all_timeGpuKer,

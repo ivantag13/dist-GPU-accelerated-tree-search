@@ -6,6 +6,7 @@ extern "C"
 {
 #endif
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -48,7 +49,7 @@ extern "C"
 
   // Generate children nodes (evaluated on GPU) on CPU
   static inline void generate_children(Node *parents, Node *children, const int size, const int jobs, int *bounds, unsigned long long int *exploredTree,
-                                       unsigned long long int *exploredSol, int *best, SinglePool_atom *pool, int *index)
+                                       unsigned long long int *exploredSol, int *best, int *index)
   {
     int sum = 0;
     int childrenIndex = 0;
@@ -77,7 +78,7 @@ extern "C"
           if (lowerbound < *best)
           {
             Node child;
-            memcpy(child.prmu, parent.prmu, jobs * sizeof(int));
+            memcpy(child.prmu, parent.prmu, jobs * sizeof(int16_t));
             swap(&child.prmu[depth], &child.prmu[j]);
             child.depth = depth + 1;
             child.limit1 = parent.limit1 + 1;
@@ -93,12 +94,12 @@ extern "C"
     *index = childrenIndex;
   }
 
-  void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, int ws, const int commSize, const int LB, const int version);
+  void print_settings(const int inst, const int machines, const int jobs, const int ub, const int lb, const int D, const int C, int ws, const int commSize, const int LB, const int version);
 
   void print_results(const int optimum, const unsigned long long int exploredTree,
                      const unsigned long long int exploredSol, const double timer);
 
-  void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *D, int *ws, int *L, double *perc);
+  void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *m, int *M, int *T, int *D, int *C, int *ws, int *L, double *perc);
 
 #ifdef __cplusplus
 }

@@ -10,7 +10,9 @@
 # === Default values ===
 MIN_SIZE=25
 MAX_SIZE=50000
+CPU_SIZE=5000
 DEVICES=1
+CPUS=1
 WORK_STEALING=1
 REPETITIONS=1
 JOBS=0
@@ -18,11 +20,13 @@ MACHINES=0
 LEVEL=1
 
 # === Parse command-line options ===
-while getopts ":m:M:D:w:r:j:g:l:" opt; do
+while getopts ":m:M:T:D:C:w:r:j:g:l:" opt; do
   case $opt in
     m) MIN_SIZE=$OPTARG ;;
     M) MAX_SIZE=$OPTARG ;;
+    T) CPU_SIZE=$OPTARG ;;
     D) DEVICES=$OPTARG ;;
+    C) CPUS=$OPTARG ;;
     w) WORK_STEALING=$OPTARG ;;
     r) REPETITIONS=$OPTARG ;;
     j) JOBS=$OPTARG ;;
@@ -85,7 +89,7 @@ echo "------------------------------------------"
 for k in $INSTANCES; do
   for ((i=1; i<=REPETITIONS; i++)); do
     echo "Running instance $k (rep $i)"
-    srun ./../pfsp_multigpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE" -D "$DEVICES" -w "$WORK_STEALING"
+    srun ./../pfsp_multigpu_hip.out -i "$k" -l "$LEVEL" -m "$MIN_SIZE" -M "$MAX_SIZE" -T "$CPU_SIZE" -D "$DEVICES" -C "$CPUS" -w "$WORK_STEALING"
   done
 done
 
