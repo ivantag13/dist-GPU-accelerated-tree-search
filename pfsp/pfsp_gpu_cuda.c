@@ -102,6 +102,46 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   int *johnson_schedule_d, *lags_d, *machine_pairs_1_d, *machine_pairs_2_d, *machine_pair_order_d;
   lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
 
+  // TODO: Explore different ways for allocating data structures in GPU memory
+  // TODO: Should jobs and machines be also copied ???
+  // // Vectors for deep copy of lbound1 to device
+  // lb1_bound_data *lbound1_d;
+  // lb1_bound_data *lbound1_h;
+
+  // // Allocating and copying memory necessary for deep copy of lbound1
+  // lbound1_h = (lb1_bound_data *)malloc(sizeof(lb1_bound_data));
+  // memcpy(lbound1_h, lbound1, sizeof(lb1_bound_data));
+  // cudaMalloc((void **)&(lbound1_h->p_times), jobs * machines * sizeof(int));
+  // cudaMalloc((void **)&(lbound1_h->min_heads), machines * sizeof(int));
+  // cudaMalloc((void **)&(lbound1_h->min_tails), machines * sizeof(int));
+  // cudaMemcpy(lbound1_h->p_times, lbound1->p_times, (jobs * machines) * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMemcpy(lbound1_h->min_heads, lbound1->min_heads, machines * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMemcpy(lbound1_h->min_tails, lbound1->min_tails, machines * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMalloc((void **)&lbound1_d, sizeof(lb1_bound_data));
+  // cudaMemcpy(lbound1_d, lbound1_h, sizeof(lb1_bound_data), cudaMemcpyHostToDevice);
+
+  // // Vectors for deep copy of lbound2 to device
+  // lb2_bound_data *lbound2_d;
+  // lb2_bound_data *lbound2_h;
+
+  // // Allocating and copying memory necessary for deep copy of lbound2
+  // lbound2_h = (lb2_bound_data *)malloc(sizeof(lb2_bound_data));
+  // memcpy(lbound2_h, lbound2, sizeof(lb2_bound_data));
+
+  // int nb_mac_pairs = lbound2->nb_machine_pairs;
+  // cudaMalloc((void **)&(lbound2_h->johnson_schedules), (nb_mac_pairs * jobs) * sizeof(int));
+  // cudaMalloc((void **)&(lbound2_h->lags), (nb_mac_pairs * jobs) * sizeof(int));
+  // cudaMalloc((void **)&(lbound2_h->machine_pairs_1), nb_mac_pairs * sizeof(int));
+  // cudaMalloc((void **)&(lbound2_h->machine_pairs_2), nb_mac_pairs * sizeof(int));
+  // cudaMalloc((void **)&(lbound2_h->machine_pair_order), nb_mac_pairs * sizeof(int));
+  // cudaMemcpy(lbound2_h->johnson_schedules, lbound2->johnson_schedules, (nb_mac_pairs * jobs) * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMemcpy(lbound2_h->lags, lbound2->lags, (nb_mac_pairs * jobs) * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMemcpy(lbound2_h->machine_pairs_1, lbound2->machine_pairs_1, nb_mac_pairs * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMemcpy(lbound2_h->machine_pairs_2, lbound2->machine_pairs_2, nb_mac_pairs * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMemcpy(lbound2_h->machine_pair_order, lbound2->machine_pair_order, nb_mac_pairs * sizeof(int), cudaMemcpyHostToDevice);
+  // cudaMalloc((void **)&lbound2_d, sizeof(lb2_bound_data));
+  // cudaMemcpy(lbound2_d, lbound2_h, sizeof(lb2_bound_data), cudaMemcpyHostToDevice);
+
   // Allocating parents vector on CPU and GPU
   // TODO: rethink dynamic allocation of CPU memory?!
   Node *parents = (Node *)malloc(M * sizeof(Node));
