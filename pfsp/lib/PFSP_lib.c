@@ -138,9 +138,9 @@ void print_settings(const int inst, const int machines, const int jobs, const in
   else if (version == 1)
     printf("Single-GPU C+CUDA\n\n");
   else if (version == 2)
-    printf("Multi-core Multi-GPU C+OpenMP+CUDA (%d GPU(s) / %d CPU(s) - [%d]WS)\n\n", D, C, ws);
+    printf("Multi-core Multi-GPU C+OpenMP+CUDA (%d GPU(s) - [%d] Multi-core - [%d] Work Stealing)\n\n", D, C, ws);
   else
-    printf("Distributed Multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x ( %d GPU(s) / %d CPU(s) ) - LB[%d])\n\n", commSize, D, C, LB);
+    printf("Distributed Multi-GPU C+MPI+OpenMP+CUDA (%d MPI processes x ( %d GPU(s) - [%d] Multi-core ) - [%d] LB)\n\n", commSize, D, C, LB);
 
   printf("Resolution of PFSP Taillard's instance: ta%d (m = %d, n = %d)\n", inst, machines, jobs);
   if (ub == 0)
@@ -178,8 +178,8 @@ void parse_parameters(int argc, char *argv[], int *inst, int *lb, int *ub, int *
   *m = 25;
   *M = 50000;
   *T = 5000;
-  *D = 0;
-  *C = 0;
+  *D = 1;
+  *C = 1;
   *ws = 1;
   *L = 1;
   *perc = 0.5;
