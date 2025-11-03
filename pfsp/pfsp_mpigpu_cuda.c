@@ -12,10 +12,10 @@ Multi-GPU B&B to solve Taillard instances of the PFSP based on MPI+CUDA written 
 #include <getopt.h>
 #include <time.h>
 #include <math.h>
-#include <mpi.h>
 #include <omp.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <mpi.h>
 
 #include "lib/c_bound_simple.h"
 #include "lib/c_bound_johnson.h"
@@ -250,6 +250,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   int *bounds_d;
   cudaMalloc((void **)&bounds_d, (jobs * M) * sizeof(int));
 
+  printf("MPIRank[%d] is before GPU-accelerated while\n", MPIRank);
   while (1)
   {
     int poolSize = popBackBulk(&pool_lloc, m, M, parents, 1);
@@ -293,7 +294,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       pushBackBulk(&pool_lloc, children, indexChildren);
 
       // Answer WS requests after a complete round of bounding+pruning+branching
-      MPI_Win_sync(win_requests);
+      // MPI_Win_sync(win_requests);
       int tries = 0;
       int requests[commSize];
       permute(requests, commSize); // Introduce some randomness
@@ -553,6 +554,8 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
       // }
     }
   }
+
+  printf("MPIRank[%d] is after GPU-accelerated while\n", MPIRank);
 
   for (int i = 0; i < commSize; i++)
     printf("Proc[%d] steal_request[%d] = %d\n", MPIRank, i, steal_request[i]);
