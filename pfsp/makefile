@@ -22,10 +22,12 @@ ifeq ($(SYSTEM), g5k)
   CUDA_LIB     := -L/usr/local/cuda-11.2/targets/x86_64-linux/lib
   AMD_GPU_ARCH  := gfx906
 else ifeq ($(SYSTEM), lumi)
+  ROCM_PATH    ?= /opt/rocm-6.0.3
   MPI_INCLUDE  := -I/opt/cray/pe/mpich/8.1.29/ofi/cray/17.0/include
   MPI_LIB      := -L/opt/cray/pe/mpich/8.1.29/ofi/cray/17.0/lib
   MPI_FLAGS    := -lmpi
   AMD_GPU_ARCH := gfx90a
+  HIP_COMMON_OPTS += -L$(ROCM_PATH)/lib/llvm/lib -Wl,-rpath,$(ROCM_PATH)/lib/llvm/lib
 endif
 
 C_COMMON_OPTS    := -O3 -Wall -g -Wno-uninitialized
@@ -111,10 +113,10 @@ pfsp_gpu_hip.out: pfsp_gpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simp
 # Build executable for multi-GPU in C+MPI+CUDA
 pfsp_mpigpu_hip.o: pfsp_mpigpu_cuda.c
 	hipify-perl $< > $<.hip
-	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) -c $<.hip -o $@
+	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) -fopenmp -c $<.hip -o $@
 
-pfsp_mpigpu_hip.out: pfsp_mpigpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib.o $(LIBPATH)/PFSP_statistic.o
-	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) $(MPI_FLAGS)-fopenmp $^ -o $@ -lm -lcudart $(CUDA_INCLUDE) $(CUDA_LIB)
+pfsp_mpigpu_hip.out: pfsp_mpigpu_hip.o $(LIBPATH)/c_taillard.o $(LIBPATH)/c_bound_simple.o $(LIBPATH)/c_bound_johnson.o $(LIBPATH)/PFSP_node.o $(LIBPATH)/PFSP_lib.o $(LIBPATH)/Pool_atom.o $(LIBCOMMON)/util.o $(LIBPATH)/PFSP_gpu_lib_hip.o $(LIBPATH)/PFSP_statistic.o
+	$(HIP_COMPILER) $(HIP_COMMON_OPTS) $(MPI_INCLUDE) $(MPI_LIB) $(MPI_FLAGS) -fopenmp $^ -o $@
 
 # Build executable for multi-GPU in C+OpenMP+HIP
 pfsp_multigpu_hip.o: pfsp_multigpu_cuda.c
