@@ -1,4 +1,15 @@
-# Building code
+# Building code with CMake file
+
+One can also build with the CMake file option. The CUDA option is completely functional. The HIP option is under process of fixing. One only needs to run on the command line for the CUDA configuration step (`-B` build directory, `-S` source directory):
+`cmake -B build -S . -DUSE_HIP=OFF -DCUDA_ARCH=80`
+
+For the HIP configuration step (still unstable):
+`cmake -B build -S . -DUSE_HIP=ON -DHIP_ARCH=gfx90a`
+
+For the build step (`-j` build in parallel):
+`cmake --build build -j`
+
+# Building code with makefile option
 
 The `makefile` builds all CUDA programs and their HIP versions (using ROCm/HIP `hipify-perl` tool). From this version onward, the pure single-GPU version, `pfsp_gpu_cuda.c`, will be deprecated serving mainly for development purposes.
 
@@ -9,6 +20,8 @@ Its `SYSTEM` command-line option can be set to `{g5k, lumi}` to manually handle 
 Suppose you want to compile the distributed version of the code on the Grid5000 (chuc node). The following command should be executed:
 
 `make SYSTEM=g5k pfsp_dist_multigpu_cuda.out`
+
+# Running your code
 
 This folder contains a subfolder called `launch_scripts` (The file `sgpu_launch.sh` is deprecated). It contains bash scripts to launch batch of experiments in LUMI supercomputer (SLURM system):
 - `mgpu_launch.sh`: launches sets of experiments for a multi-core multi-GPU implementation. It contains the following flags:
@@ -32,5 +45,3 @@ When running `dmgpu_launch.sh`, one should launch it by setting the amount of no
 `sbatch --nodes=16 dmgpu_launch.sh -j 20 -g 10 -D 6 -l 2 -L 1 -n 16`
 
 **Note**: For executing instances with `50` jobs or more, one should edit (for now) the file `lib/macro.h` for setting macro `MAX_JOBS` as the amount of jobs for desired instances (by default is set to `20`). Furthermore, one could also optimize by changing the variable `MAX_MACHINES` (set to `20` by default) to correspond the number of machines chosen for a given execution of a certain Taillard instance before compilation.
-
-# Building code with CMake file
