@@ -14,6 +14,10 @@ include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/lib ${CMAKE_SOURCE_D
 
 # ==== Dependencies ====
 find_package(MPI REQUIRED)
+# message(STATUS "MPI_C_FOUND: ${MPI_C_FOUND}")
+# message(STATUS "MPI_C_INCLUDE_DIRS: ${MPI_C_INCLUDE_DIRS}") 
+# message(STATUS "MPI_C_COMPILE_OPTIONS: ${MPI_C_COMPILE_OPTIONS}")
+# message(STATUS "MPI_C_LINK_FLAGS: ${MPI_C_LINK_FLAGS}")
 find_package(OpenMP REQUIRED)
 
 # ==== Common C sources ====
@@ -28,11 +32,17 @@ set(COMMON_LIB_SOURCES
     ../common/util.c
 )
 
-# ==== CUDA sources ====
+# ==== CUDA kernel sources ====
 set(CUDA_KERNELS
     ../common/gpu_util.cu
     lib/PFSP_gpu_lib.cu
     lib/bounds_gpu.cu
+)
+
+# ==== CUDA main sources ====
+set(CUDA_MAIN_SOURCES
+    pfsp_multigpu_cuda.c
+    pfsp_dist_multigpu_cuda.c
 )
 
 # ==== Sequential executable (C only) ====
@@ -63,19 +73,38 @@ if(USE_HIP)
     set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
     # Hipify CUDA sources into HIP sources in build dir
-    set(HIP_SOURCES)
+    set(HIP_KERNEL_SOURCES)
     foreach(src ${CUDA_KERNELS})
-        get_filename_component(fname ${src} NAME_WE) # basename without extension
+        get_filename_component(fname ${src} NAME_WE)
         set(hip_src "${CMAKE_BINARY_DIR}/${fname}.hip")
         add_custom_command(
             OUTPUT ${hip_src}
-            COMMAND ${HIP_HIPIFY_PERL} ${CMAKE_SOURCE_DIR}/${src} > ${hip_src}
-            DEPENDS ${src}
+            COMMAND hipify-perl ${CMAKE_CURRENT_SOURCE_DIR}/${src} > ${hip_src}
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${src}
             COMMENT "Hipifying ${src}"
             VERBATIM
         )
-        list(APPEND HIP_SOURCES ${hip_src})
+        list(APPEND HIP_KERNEL_SOURCES ${hip_src})
     endforeach()
+
+    # Hipify main sources separately
+    set(HIP_MULTIGPU_MAIN "${CMAKE_BINARY_DIR}/pfsp_multigpu_cuda.hip")
+    add_custom_command(
+        OUTPUT ${HIP_MULTIGPU_MAIN}
+        COMMAND hipify-perl ${CMAKE_CURRENT_SOURCE_DIR}/pfsp_multigpu_cuda.c > ${HIP_MULTIGPU_MAIN}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/pfsp_multigpu_cuda.c
+        COMMENT "Hipifying pfsp_multigpu_cuda.c"
+        VERBATIM
+    )
+
+    set(HIP_DIST_MULTIGPU_MAIN "${CMAKE_BINARY_DIR}/pfsp_dist_multigpu_cuda.hip")
+    add_custom_command(
+        OUTPUT ${HIP_DIST_MULTIGPU_MAIN}
+        COMMAND hipify-perl ${CMAKE_CURRENT_SOURCE_DIR}/pfsp_dist_multigpu_cuda.c > ${HIP_DIST_MULTIGPU_MAIN}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/pfsp_dist_multigpu_cuda.c
+        COMMENT "Hipifying pfsp_dist_multigpu_cuda.c"
+        VERBATIM
+    )
 
     # # Single-GPU HIP
     # add_executable(pfsp_gpu_hip.out
@@ -89,22 +118,60 @@ if(USE_HIP)
 
     # Multi-GPU HIP + OpenMP
     add_executable(pfsp_multigpu_hip.out
-        pfsp_multigpu_cuda.c
+        ${HIP_MULTIGPU_MAIN}
         ${COMMON_LIB_SOURCES}
-        ${HIP_SOURCES}
+        ${HIP_KERNEL_SOURCES}
     )
     set_target_properties(pfsp_multigpu_hip.out PROPERTIES HIP_ARCHITECTURES ${HIP_ARCH})
     target_compile_options(pfsp_multigpu_hip.out PRIVATE -O3 -Wall -fopenmp -g)
+    target_link_options(pfsp_multigpu_hip.out PRIVATE -fopenmp)
     target_link_libraries(pfsp_multigpu_hip.out PRIVATE OpenMP::OpenMP_C m)
 
     # Distributed Multi-GPU HIP + MPI + OpenMP
     add_executable(pfsp_dist_multigpu_hip.out
-        pfsp_dist_multigpu_cuda.c
+        ${HIP_DIST_MULTIGPU_MAIN}
         ${COMMON_LIB_SOURCES}
-        ${HIP_SOURCES}
+        ${HIP_KERNEL_SOURCES}
     )
     set_target_properties(pfsp_dist_multigpu_hip.out PROPERTIES HIP_ARCHITECTURES ${HIP_ARCH})
     target_compile_options(pfsp_dist_multigpu_hip.out PRIVATE -O3 -Wall -fopenmp -g)
+    target_link_options(pfsp_dist_multigpu_hip.out PRIVATE -fopenmp)
+    
+    # Manually discover MPI include paths
+    execute_process(
+        COMMAND ${MPI_C_COMPILER} -show
+        OUTPUT_VARIABLE MPI_COMPILER_SHOW
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE MPI_COMPILER_RESULT
+    )
+
+    if(MPI_COMPILER_RESULT EQUAL 0)
+        # Parse the output to find include directories
+        string(REGEX MATCHALL "-I[^ ]+" MPI_INCLUDE_FLAGS "${MPI_COMPILER_SHOW}")
+        if(MPI_INCLUDE_FLAGS)
+            # Remove the -I prefix and add as include directories
+            foreach(include_flag ${MPI_INCLUDE_FLAGS})
+                string(SUBSTRING "${include_flag}" 2 -1 include_dir)
+                target_include_directories(pfsp_dist_multigpu_hip.out PRIVATE ${include_dir})
+                message(STATUS "Adding MPI include directory: ${include_dir}")
+            endforeach()
+        else()
+            # If no -I flags found, try common Cray MPI paths
+            target_include_directories(pfsp_dist_multigpu_hip.out PRIVATE 
+                /opt/cray/pe/mpich/8.1.29/ofi/cray/17.0/include
+                /opt/cray/pe/mpi/17.0/include
+            )
+            message(STATUS "Using default Cray MPI include paths")
+        endif()
+    else()
+        # Fallback to common Cray MPI paths
+        target_include_directories(pfsp_dist_multigpu_hip.out PRIVATE 
+            /opt/cray/pe/mpich/8.1.29/ofi/cray/17.0/include
+            /opt/cray/pe/mpi/17.0/include
+        )
+        message(STATUS "Using fallback Cray MPI include paths")
+    endif()
+    
     target_link_libraries(pfsp_dist_multigpu_hip.out PRIVATE MPI::MPI_C OpenMP::OpenMP_C m)
 
 # ==== CUDA Backend ====
