@@ -153,7 +153,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
   // TODO: if no multi-core is activated (C==0) one need to fix how the mapping should be fixed in case of inter-node work stealing
   int deviceCount = 0;
   cudaGetDeviceCount(&deviceCount);
-  int nb_proc;
+  int nb_proc = 0;
   if (C == 1)
     nb_proc = omp_get_num_procs();
   else if (C == 0)
@@ -318,11 +318,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
     startGpuMalloc = omp_get_wtime();
     // GPU bounding functions data
     lb1_bound_data lbound1_d;
-    int *p_times_d, *min_heads_d, *min_tails_d;
+    int *p_times_d = NULL, *min_heads_d = NULL, *min_tails_d = NULL;
     lb1_alloc_gpu(&lbound1_d, lbound1, p_times_d, min_heads_d, min_tails_d, jobs, machines);
 
     lb2_bound_data lbound2_d;
-    int *johnson_schedule_d, *lags_d, *machine_pairs_1_d, *machine_pairs_2_d, *machine_pair_order_d;
+    int *johnson_schedule_d = NULL, *lags_d = NULL, *machine_pairs_1_d = NULL, *machine_pairs_2_d = NULL, *machine_pair_order_d = NULL;
     lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
 
     // Allocating parents vector on CPU and GPU
@@ -934,7 +934,7 @@ int main(int argc, char *argv[])
 
   int deviceCount = 0;
   cudaGetDeviceCount(&deviceCount);
-  int nb_proc;
+  int nb_proc = 0;
   if (C == 1) // Activate Multi-core
     nb_proc = omp_get_num_procs();
   else if (C == 0) // Deactivate Multi-core
@@ -956,32 +956,34 @@ int main(int argc, char *argv[])
 
   int optimum = (ub == 1) ? taillard_get_best_ub(inst) : INT_MAX;
   unsigned long long int exploredTree = 0, exploredSol = 0;
-  unsigned long long int *all_expTreeGPU, *all_expSolGPU, *all_genChildGPU, *all_nbStealsGPU, *all_nbSStealsGPU, *all_nbTerminationGPU, nbSDistLoadBal[commSize];
+  unsigned long long int *all_expTreeGPU = NULL, *all_expSolGPU = NULL, *all_genChildGPU = NULL, *all_nbStealsGPU = NULL, *all_nbSStealsGPU = NULL,
+                         *all_nbTerminationGPU = NULL, nbSDistLoadBal[commSize];
 
   double elapsedTime = 0;
-  double *all_timeGpuCpy, *all_timeGpuMalloc, *all_timeGpuKer, *all_timeGenChild, *all_timePoolOps, *all_timeGpuIdle, *all_timeTermination, timeLoadBal[commSize];
+  double *all_timeGpuCpy = NULL, *all_timeGpuMalloc = NULL, *all_timeGpuKer = NULL, *all_timeGenChild = NULL, *all_timePoolOps = NULL, *all_timeGpuIdle = NULL,
+         *all_timeTermination = NULL, timeLoadBal[commSize];
 
   for (int i = 0; i < commSize; i++)
   {
     nbSDistLoadBal[i] = 0;
     timeLoadBal[i] = 0;
   }
-  if (MPIRank == 0)
-  {
-    all_expTreeGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
-    all_expSolGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
-    all_genChildGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
-    all_nbStealsGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
-    all_nbSStealsGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
-    all_nbTerminationGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
-    all_timeGpuCpy = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-    all_timeGpuMalloc = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-    all_timeGpuKer = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-    all_timeGenChild = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-    all_timePoolOps = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-    all_timeGpuIdle = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-    all_timeTermination = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
-  }
+  // if (MPIRank == 0)
+  // {
+  all_expTreeGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
+  all_expSolGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
+  all_genChildGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
+  all_nbStealsGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
+  all_nbSStealsGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
+  all_nbTerminationGPU = (unsigned long long int *)malloc(commSize * NB_THREADS_MAX * sizeof(unsigned long long int));
+  all_timeGpuCpy = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  all_timeGpuMalloc = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  all_timeGpuKer = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  all_timeGenChild = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  all_timePoolOps = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  all_timeGpuIdle = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  all_timeTermination = (double *)malloc(commSize * NB_THREADS_MAX * sizeof(double));
+  // }
 
   pfsp_search(inst, lb, m, M, T, D, C, LB, MPIRank, commSize, perc, &optimum, &exploredTree, &exploredSol, &elapsedTime,
               all_expTreeGPU, all_expSolGPU, all_genChildGPU, all_nbStealsGPU, all_nbSStealsGPU, all_nbTerminationGPU, nbSDistLoadBal,
@@ -996,35 +998,35 @@ int main(int argc, char *argv[])
                                       all_expTreeGPU, all_expSolGPU, all_genChildGPU, all_nbStealsGPU, all_nbSStealsGPU, all_nbTerminationGPU, nbSDistLoadBal,
                                       all_timeGpuCpy, all_timeGpuMalloc, all_timeGpuKer, all_timeGenChild, all_timePoolOps, all_timeGpuIdle, all_timeTermination, timeLoadBal);
   }
-  if (MPIRank == 0)
-  {
-    free(all_expTreeGPU);
-    all_expTreeGPU = NULL;
-    free(all_expSolGPU);
-    all_expSolGPU = NULL;
-    free(all_genChildGPU);
-    all_genChildGPU = NULL;
-    free(all_nbStealsGPU);
-    all_nbStealsGPU = NULL;
-    free(all_nbSStealsGPU);
-    all_nbSStealsGPU = NULL;
-    free(all_nbTerminationGPU);
-    all_nbTerminationGPU = NULL;
-    free(all_timeGpuCpy);
-    all_timeGpuCpy = NULL;
-    free(all_timeGpuMalloc);
-    all_timeGpuMalloc = NULL;
-    free(all_timeGpuKer);
-    all_timeGpuKer = NULL;
-    free(all_timeGenChild);
-    all_timeGenChild = NULL;
-    free(all_timePoolOps);
-    all_timePoolOps = NULL;
-    free(all_timeGpuIdle);
-    all_timeGpuIdle = NULL;
-    free(all_timeTermination);
-    all_timeTermination = NULL;
-  }
+  // if (MPIRank == 0)
+  // {
+  free(all_expTreeGPU);
+  all_expTreeGPU = NULL;
+  free(all_expSolGPU);
+  all_expSolGPU = NULL;
+  free(all_genChildGPU);
+  all_genChildGPU = NULL;
+  free(all_nbStealsGPU);
+  all_nbStealsGPU = NULL;
+  free(all_nbSStealsGPU);
+  all_nbSStealsGPU = NULL;
+  free(all_nbTerminationGPU);
+  all_nbTerminationGPU = NULL;
+  free(all_timeGpuCpy);
+  all_timeGpuCpy = NULL;
+  free(all_timeGpuMalloc);
+  all_timeGpuMalloc = NULL;
+  free(all_timeGpuKer);
+  all_timeGpuKer = NULL;
+  free(all_timeGenChild);
+  all_timeGenChild = NULL;
+  free(all_timePoolOps);
+  all_timePoolOps = NULL;
+  free(all_timeGpuIdle);
+  all_timeGpuIdle = NULL;
+  free(all_timeTermination);
+  all_timeTermination = NULL;
+  // }
   MPI_Finalize();
   return 0;
 }

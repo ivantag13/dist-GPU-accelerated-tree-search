@@ -60,7 +60,7 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 {
   int deviceCount = 0;
   cudaGetDeviceCount(&deviceCount);
-  int nb_proc;
+  int nb_proc = 0;
   if (C == 1)
     nb_proc = omp_get_num_procs();
   else if (C == 0)
@@ -186,11 +186,11 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
     // GPU bounding functions data
     lb1_bound_data lbound1_d;
-    int *p_times_d, *min_heads_d, *min_tails_d;
+    int *p_times_d = NULL, *min_heads_d = NULL, *min_tails_d = NULL;
     lb1_alloc_gpu(&lbound1_d, lbound1, p_times_d, min_heads_d, min_tails_d, jobs, machines);
 
     lb2_bound_data lbound2_d;
-    int *johnson_schedule_d, *lags_d, *machine_pairs_1_d, *machine_pairs_2_d, *machine_pair_order_d;
+    int *johnson_schedule_d = NULL, *lags_d = NULL, *machine_pairs_1_d = NULL, *machine_pairs_2_d = NULL, *machine_pair_order_d = NULL;
     lb2_alloc_gpu(&lbound2_d, lbound2, johnson_schedule_d, lags_d, machine_pairs_1_d, machine_pairs_2_d, machine_pair_order_d, jobs, machines);
 
     // Allocating parents vector on CPU and GPU
@@ -530,7 +530,7 @@ int main(int argc, char *argv[])
 
   int deviceCount = 0;
   cudaGetDeviceCount(&deviceCount);
-  int nb_proc;
+  int nb_proc = 0;
   if (C == 1) // Activate Multi-core
     nb_proc = omp_get_num_procs();
   else if (C == 0) // Deactivate Multi-core
