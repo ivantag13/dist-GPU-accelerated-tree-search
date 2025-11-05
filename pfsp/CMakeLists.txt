@@ -125,7 +125,10 @@ if(USE_HIP)
     set_target_properties(pfsp_multigpu_hip.out PROPERTIES HIP_ARCHITECTURES ${HIP_ARCH})
     target_compile_options(pfsp_multigpu_hip.out PRIVATE -O3 -Wall -fopenmp -g)
     target_link_options(pfsp_multigpu_hip.out PRIVATE -fopenmp)
-    target_link_libraries(pfsp_multigpu_hip.out PRIVATE OpenMP::OpenMP_C m)
+    # NOTE: In case you want to rely on the system's compiler uncomment this line (e.g., coming from `find_package(OpenMP REQUIRED)`)
+    # NOTE: I want specifically the compiler from LLVM OpenMP and not the one from GNU OpenMP
+    #target_link_libraries(pfsp_multigpu_hip.out PRIVATE OpenMP::OpenMP_C m)
+    target_link_libraries(pfsp_multigpu_hip.out PRIVATE m)
 
     # Distributed Multi-GPU HIP + MPI + OpenMP
     add_executable(pfsp_dist_multigpu_hip.out
@@ -138,13 +141,6 @@ if(USE_HIP)
     target_link_options(pfsp_dist_multigpu_hip.out PRIVATE -fopenmp)
     
     # Manually discover MPI include paths
-    execute_process(
-        COMMAND ${MPI_C_COMPILER} -show
-        OUTPUT_VARIABLE MPI_COMPILER_SHOW
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE MPI_COMPILER_RESULT
-    )
-
     if(MPI_COMPILER_RESULT EQUAL 0)
         # Parse the output to find include directories
         string(REGEX MATCHALL "-I[^ ]+" MPI_INCLUDE_FLAGS "${MPI_COMPILER_SHOW}")
@@ -172,7 +168,10 @@ if(USE_HIP)
         message(STATUS "Using fallback Cray MPI include paths")
     endif()
     
-    target_link_libraries(pfsp_dist_multigpu_hip.out PRIVATE MPI::MPI_C OpenMP::OpenMP_C m)
+    # NOTE: In case you want to rely on the system's compiler uncomment this line (e.g., coming from `find_package(OpenMP REQUIRED)`)
+    # NOTE: I want specifically the compiler from LLVM OpenMP and not the one from GNU OpenMP
+    # target_link_libraries(pfsp_dist_multigpu_hip.out PRIVATE MPI::MPI_C OpenMP::OpenMP_C m)
+    target_link_libraries(pfsp_dist_multigpu_hip.out PRIVATE MPI::MPI_C m)
 
 # ==== CUDA Backend ====
 else()
