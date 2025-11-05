@@ -68,9 +68,11 @@ Problem-specific command-line options:
   - **`-T`**: maximum number of elements to treat on a CPU processing unit in a single pop back from its pool
     - any positive integer greater than `--m` (`5000` by default)
 
-  - **`-C`**: activate additional multi-core processing on top of GPU processing. Mapping and amount of extra processing units is automatically taken care of. This option is yet unstable on the distributed implementation. Please stick to the default setting.
+  - **`-C`**: in `gpu` based implementations (`pfsp_multigpu_cuda.c` and `pfsp_dist_multigpu_cuda.c`), it activates additional multi-core processing on top of GPU processing. Mapping and amount of extra processing units is automatically taken care of. This option is yet unstable on the distributed implementation. Please stick to the default setting.
     - `0`: disable multi-core processing
     - `1`: enable multi-core processing (default)
+  - In `cpu` based implementations (`pfsp_omp_c.c`) it determines the amount of CPU cores to be used.
+    - any positive integer, typically the number of CPU processing units (`1` by default)
 
   - **`-i`**: Taillard's instance to solve
     - any positive integer between `001` and `120` (`014` by default)

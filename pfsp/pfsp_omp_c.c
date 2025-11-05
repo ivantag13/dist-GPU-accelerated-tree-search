@@ -377,6 +377,7 @@ int main(int argc, char *argv[])
     int inst, lb, ub, m, M, T, D, C, ws, LB, commSize = 1; // commSize is an artificial variable here
     double perc;
     parse_parameters(argc, argv, &inst, &lb, &ub, &m, &M, &T, &D, &C, &ws, &LB, &perc);
+    D = 0;
 
     int nb_proc = omp_get_num_procs();
     if (C > nb_proc)
