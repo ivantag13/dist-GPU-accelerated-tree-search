@@ -1,16 +1,18 @@
 # Building code with CMake file
 
-One can also build with the CMake file option. The CUDA option is completely functional. The HIP option is under process of fixing. One only needs to run on the command line for the CUDA configuration step (`-B` build directory, `-S` source directory):
+One can build with the CMake file option. The configuration step for CUDA build is (`-B` build directory, `-S` source directory):
 
 `cmake -B build -S . -DUSE_HIP=OFF -DCUDA_ARCH=80`
 
-For the HIP configuration step (still unstable):
+For the HIP configuration step:
 
 `cmake -B build -S . -DUSE_HIP=ON -DHIP_ARCH=gfx90a`
 
 For the build step (`-j` build in parallel):
 
 `cmake --build build -j`
+
+**Note**: You must know the code of the GPU architecture you want to use.
 
 # Building code with makefile option
 
