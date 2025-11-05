@@ -10,9 +10,9 @@ extern "C"
   // CUDA error checking
   // TODO: fix portability for variable cudaError_t (https://rocm.docs.amd.com/projects/HIP/en/docs-develop/how-to/hip_porting_guide.html)
   // #define gpuErrchk(ans)                          \
-//   {                                             \
-//     gpuAssert((ans), __FILE__, __LINE__, true); \
-//   }
+  //   {                                             \
+  //     gpuAssert((ans), __FILE__, __LINE__, true); \
+  //   }
   //   void gpuAssert(cudaError_t code, const char *file, int line, bool abort)
   //   {
   //     if (code != cudaSuccess)
@@ -70,7 +70,7 @@ extern "C"
     to the other lower bounds.
   */
   // Evaluate a bulk of parent nodes on GPU using lb1_d.
-  __global__ void evaluate_gpu_lb1_d(const int jobs, const int size, Node *parents_d, const lb1_bound_data lbound1_d, int *bounds)
+  __global__ void evaluate_gpu_lb1_d(const int jobs, const int size, Node *parents_d, const lb1_bound_data lbound1_d, int *bounds, int *sumOffSets_d)
   {
     int parentId = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -87,14 +87,17 @@ extern "C"
 
       lb1_children_bounds_gpu(lbound1_d, prmu, limit1, jobs, lb_begin);
 
-      for (int k = 0; k < jobs; k++)
+      // for (int k = 0; k < jobs; k++)
+      // {
+      for (int k = limit1 + 1; k < jobs; k++)
       {
-        if (k >= limit1 + 1)
-        {
-          const int job = prmu[k];
-          bounds[parentId * jobs + k] = lb_begin[job];
-        }
+        const int job = prmu[k];
+        int index = (k - (limit1 + 1));
+        if (parentId != 0)
+          index += sumOffSets_d[parentId - 1];
+        bounds[index] = lb_begin[job];
       }
+      // }
     }
   }
 
@@ -131,8 +134,8 @@ extern "C"
     switch (lb)
     {
     case 0: // lb1_d
-      nbBlocks_lb1_d = ceil((double)nbBlocks / jobs);
-      evaluate_gpu_lb1_d<<<nbBlocks_lb1_d, BLOCK_SIZE>>>(jobs, size, parents, lbound1, bounds);
+      nbBlocks_lb1_d = ceil((double)parentsSize / BLOCK_SIZE);
+      evaluate_gpu_lb1_d<<<nbBlocks_lb1_d, BLOCK_SIZE>>>(jobs, parentsSize, parents, lbound1, bounds, sumOffSets_d);
       return;
       break;
 

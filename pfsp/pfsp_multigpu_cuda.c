@@ -273,15 +273,13 @@ void pfsp_search(const int inst, const int lb, const int m, const int M, const i
 
           startGpuCpy = omp_get_wtime();
           int sum = 0;
-          int diff;
-          int i, j;
-          for (i = 0; i < poolSize; i++)
+          for (int i = 0; i < poolSize; i++)
           {
-            diff = jobs - parents[i].depth;
-            for (j = 0; j < diff; j++)
-              nodeIndex[j + sum] = i;
+            int diff = jobs - parents[i].depth; // Amount of child per parent
+            for (int j = 0; j < diff; j++)
+              nodeIndex[j + sum] = i; // Tell each GPU thread from which parent it should compute a child bound
             sum += diff;
-            sumOffSets[i] = sum;
+            sumOffSets[i] = sum; // Amount of children per parent node
           }
 
           int numBounds = sum;
