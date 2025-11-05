@@ -88,7 +88,7 @@ Problem-specific command-line options:
   <!-- TODO: give references -->
   - **`-l`**: lower bound function
     - `1`: one-machine bound which can be computed in $\mathcal{O}(mn)$ steps per subproblem (default), a.k.a., `LB1`
-    - `0`: fast implementation of `lb1`, which can be compute in $\mathcal{O}(m)$ steps per subproblem, a.k.a., `LB1_d` (check issue #4)
+    - `0`: fast implementation of `lb1`, which can be compute in $\mathcal{O}(m)$ steps per subproblem, a.k.a., `LB1_d`
     - `2`: two-machine bound which can be computed in $\mathcal{O}(m^2n)$ steps per subproblem, , a.k.a., `LB2`
     <!-- a two-machine bound which relies on the exact resolution of two-machine problems obtained by relaxing capacity constraints on all machines, with the exception of a pair of machines \(M<sub>u</sub>,M<sub>v</sub>\)<sub>1<=u<v<=m</sub>, and taking the maximum over all $\frac{m(m-1)}{2}$ machine-pairs. It can be computed in $\mathcal{O}(m^2n)$ steps per subproblem. -->
 

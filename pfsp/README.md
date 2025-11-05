@@ -36,7 +36,7 @@ This folder contains a subfolder called `launch_scripts` (The file `sgpu_launch.
     - `-r`: parameter that determines the amount of repetitions par iteration (default set to `1`)
     - `-j`: parameter that determine the number of jobs for launching a certain class of Taillard instances (obligatory for proper functioning of this bash file, options for jobs are `20`, `50`, `100`, `200`, `500`)
     - `-g`: parameter that determines the amount of machines for launching a certain class of Taillard instances (obligatory for proper functioning of this bash file, options for jobs are `5`, `10`, `20`)
-    - `-l`: sets bounding function `l` (do not choose value `0` because of malfunctioning on GPU devices - check issue #4).
+    - `-l`: sets bounding function `l`
     - `-w`: enables (or not) intra-node work stealing (default set to `1`)
     - `-D`: sets the amount of GPU devices (default set to `1`)
     - `-C`: sets for additional multi-core processing (default set to `1` - activated multi-core). If multi-core is activated the mapping and number of extra CPU processing units is automatically determined in our implementation.
